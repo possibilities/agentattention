@@ -1,0 +1,22 @@
+{
+  "contract": "com.example.cover-letter-review/v1",
+  "requestSchema": {
+    "type": "object",
+    "required": ["draft", "role", "company"],
+    "properties": {
+      "draft": { "type": "string" },
+      "role": { "type": "string" },
+      "company": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "resolutionSchema": {
+    "type": "object",
+    "required": ["decision"],
+    "properties": {
+      "decision": { "enum": ["approve", "comment"] },
+      "comment": { "type": "string" }
+    },
+    "additionalProperties": false
+  }
+}

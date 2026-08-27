@@ -1,0 +1,35 @@
+{
+  "contract": "com.example.browser-captcha/v1",
+  "requestSchema": {
+    "type": "object",
+    "required": ["requestedAction", "liveHandoff", "fallback"],
+    "properties": {
+      "requestedAction": { "type": "string" },
+      "liveHandoff": {
+        "type": "object",
+        "required": ["browserRef"],
+        "properties": {
+          "browserRef": { "type": "string" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "fallback": {
+        "type": "object",
+        "required": ["recipeRef"],
+        "properties": { "recipeRef": { "type": "string" } },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "resolutionSchema": {
+    "type": "object",
+    "required": ["outcome"],
+    "properties": {
+      "outcome": { "enum": ["solved", "skipped", "failed"] },
+      "note": { "type": "string" }
+    },
+    "additionalProperties": false
+  }
+}

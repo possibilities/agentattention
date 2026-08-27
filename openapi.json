@@ -1,0 +1,636 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "agentattention API",
+    "version": "0.1.0",
+    "description": "A schema-agnostic, durable local control plane for human attention. Contract identifiers and their payloads/resolutions are negotiated and validated by clients."
+  },
+  "servers": [{ "url": "http://127.0.0.1:7331" }],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "health",
+        "summary": "Process liveness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Health" } }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "ready",
+        "summary": "Database readiness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Database is ready",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Ready" } }
+            }
+          }
+        }
+      }
+    },
+    "/v1/items": {
+      "post": {
+        "operationId": "createItem",
+        "summary": "Create an attention item",
+        "description": "Requires items:create. The contract and payload are opaque to the service.",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateItem" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created, or replayed for the same principal and idempotency key",
+            "headers": {
+              "ETag": { "schema": { "type": "string" } },
+              "Location": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "get": {
+        "operationId": "listItems",
+        "summary": "List attention items",
+        "description": "Requires items:read. Ordering is priority descending, then creation time and id.",
+        "parameters": [
+          { "$ref": "#/components/parameters/Status" },
+          { "$ref": "#/components/parameters/Contract" },
+          { "$ref": "#/components/parameters/CorrelationId" },
+          { "$ref": "#/components/parameters/Label" },
+          { "$ref": "#/components/parameters/Claimed" },
+          { "$ref": "#/components/parameters/ItemCursor" },
+          { "$ref": "#/components/parameters/ItemLimit" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of items",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/v1/items/{itemId}": {
+      "get": {
+        "operationId": "getItem",
+        "summary": "Get one attention item",
+        "description": "Requires items:read. Use If-None-Match with the previous ETag for efficient polling.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ItemId" },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current item",
+            "headers": { "ETag": { "schema": { "type": "string" } } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "304": { "description": "Item revision is unchanged" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/v1/items/{itemId}/claim": {
+      "post": {
+        "operationId": "claimItem",
+        "summary": "Claim an open attention item",
+        "description": "Requires items:claim. Repeating this operation as the holder returns the existing claim without extending it.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ClaimRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Claimed item",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "patch": {
+        "operationId": "renewClaim",
+        "summary": "Renew a held claim",
+        "description": "Requires items:claim and the active claim id.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RenewClaimRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Renewed claim",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "operationId": "releaseClaim",
+        "summary": "Release a held claim",
+        "description": "Requires items:claim and the active claim id.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ReleaseClaimRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Released item",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/v1/items/{itemId}/resolution": {
+      "post": {
+        "operationId": "resolveItem",
+        "summary": "Resolve a claimed attention item",
+        "description": "Requires items:resolve. A claimed item requires the holder's claim id; an unclaimed item can be resolved atomically without one. The resolution is opaque JSON.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ItemId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ResolveRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved item, or an idempotent replay",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/v1/items/{itemId}/cancellation": {
+      "post": {
+        "operationId": "cancelItem",
+        "summary": "Cancel an open attention item",
+        "description": "Requires items:cancel. Cancellation clears an active claim.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ItemId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CancelRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cancelled item, or an idempotent replay",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/v1/events": {
+      "get": {
+        "operationId": "listEvents",
+        "summary": "Replay durable events",
+        "description": "Requires events:read. Events are ordered by their monotonic cursor.",
+        "parameters": [
+          { "$ref": "#/components/parameters/After" },
+          { "$ref": "#/components/parameters/EventLimit" },
+          { "$ref": "#/components/parameters/EventItemId" },
+          { "$ref": "#/components/parameters/Contract" },
+          { "$ref": "#/components/parameters/CorrelationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of events",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/EventPage" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/v1/events/stream": {
+      "get": {
+        "operationId": "streamEvents",
+        "summary": "Stream durable events as SSE",
+        "description": "Requires events:read. The after query parameter takes precedence over Last-Event-ID. Delivery is at-least-once.",
+        "parameters": [
+          { "$ref": "#/components/parameters/After" },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0 }
+          },
+          { "$ref": "#/components/parameters/EventItemId" },
+          { "$ref": "#/components/parameters/Contract" },
+          { "$ref": "#/components/parameters/CorrelationId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream; frame ids are durable event cursors",
+            "content": { "text/event-stream": { "schema": { "type": "string" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "aat token" }
+    },
+    "parameters": {
+      "ItemId": {
+        "name": "itemId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^attn_" }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+      },
+      "Status": {
+        "name": "status",
+        "in": "query",
+        "required": false,
+        "schema": { "$ref": "#/components/schemas/Status" }
+      },
+      "Contract": {
+        "name": "contract",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "string" }
+      },
+      "CorrelationId": {
+        "name": "correlationId",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "string" }
+      },
+      "Label": {
+        "name": "label",
+        "in": "query",
+        "required": false,
+        "description": "Repeatable exact filter encoded as key=value",
+        "schema": { "type": "array", "items": { "type": "string" } },
+        "style": "form",
+        "explode": true
+      },
+      "Claimed": {
+        "name": "claimed",
+        "in": "query",
+        "required": false,
+        "schema": { "enum": ["any", "claimed", "unclaimed", "mine"], "default": "any" }
+      },
+      "ItemCursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "string" }
+      },
+      "ItemLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 0, "default": 0 }
+      },
+      "EventLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 }
+      },
+      "EventItemId": {
+        "name": "itemId",
+        "in": "query",
+        "required": false,
+        "schema": { "type": "string" }
+      }
+    },
+    "schemas": {
+      "JsonValue": {},
+      "Status": { "type": "string", "enum": ["open", "resolved", "cancelled", "expired"] },
+      "Health": {
+        "type": "object",
+        "required": ["status"],
+        "properties": { "status": { "const": "ok" } }
+      },
+      "Ready": {
+        "type": "object",
+        "required": ["status", "eventCursor"],
+        "properties": {
+          "status": { "const": "ready" },
+          "eventCursor": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "CreateItem": {
+        "type": "object",
+        "required": ["contract", "title", "payload"],
+        "properties": {
+          "contract": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "payload": { "$ref": "#/components/schemas/JsonValue" },
+          "priority": { "type": "integer", "minimum": -1000000, "maximum": 1000000, "default": 0 },
+          "labels": {
+            "type": "object",
+            "maxProperties": 32,
+            "additionalProperties": { "type": "string", "maxLength": 256 }
+          },
+          "correlationId": { "type": ["string", "null"], "maxLength": 255 },
+          "parentId": { "type": ["string", "null"], "maxLength": 255 },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "ClaimRequest": {
+        "type": "object",
+        "properties": {
+          "leaseSeconds": { "type": "integer", "minimum": 5, "maximum": 86400, "default": 300 }
+        },
+        "additionalProperties": false
+      },
+      "RenewClaimRequest": {
+        "type": "object",
+        "required": ["claimId", "leaseSeconds"],
+        "properties": {
+          "claimId": { "type": "string" },
+          "leaseSeconds": { "type": "integer", "minimum": 5, "maximum": 86400 }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseClaimRequest": {
+        "type": "object",
+        "required": ["claimId"],
+        "properties": { "claimId": { "type": "string" } },
+        "additionalProperties": false
+      },
+      "ResolveRequest": {
+        "type": "object",
+        "required": ["resolution"],
+        "properties": {
+          "claimId": { "type": ["string", "null"] },
+          "resolution": { "$ref": "#/components/schemas/JsonValue" }
+        },
+        "additionalProperties": false
+      },
+      "CancelRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": { "reason": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+        "additionalProperties": false
+      },
+      "Claim": {
+        "type": "object",
+        "required": ["id", "holder", "claimedAt", "expiresAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "holder": { "type": "string" },
+          "claimedAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Resolution": {
+        "type": "object",
+        "required": ["payload", "resolvedBy", "resolvedAt"],
+        "properties": {
+          "payload": { "$ref": "#/components/schemas/JsonValue" },
+          "resolvedBy": { "type": "string" },
+          "resolvedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Cancellation": {
+        "type": "object",
+        "required": ["reason", "cancelledBy", "cancelledAt"],
+        "properties": {
+          "reason": { "type": "string" },
+          "cancelledBy": { "type": "string" },
+          "cancelledAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Item": {
+        "type": "object",
+        "required": [
+          "id",
+          "contract",
+          "title",
+          "payload",
+          "priority",
+          "labels",
+          "correlationId",
+          "parentId",
+          "status",
+          "claim",
+          "resolution",
+          "cancellation",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+          "expiresAt",
+          "revision"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "contract": { "type": "string" },
+          "title": { "type": "string" },
+          "payload": { "$ref": "#/components/schemas/JsonValue" },
+          "priority": { "type": "integer" },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+          "correlationId": { "type": ["string", "null"] },
+          "parentId": { "type": ["string", "null"] },
+          "status": { "$ref": "#/components/schemas/Status" },
+          "claim": { "oneOf": [{ "$ref": "#/components/schemas/Claim" }, { "type": "null" }] },
+          "resolution": {
+            "oneOf": [{ "$ref": "#/components/schemas/Resolution" }, { "type": "null" }]
+          },
+          "cancellation": {
+            "oneOf": [{ "$ref": "#/components/schemas/Cancellation" }, { "type": "null" }]
+          },
+          "createdBy": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+          "revision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "ItemResponse": {
+        "type": "object",
+        "required": ["item"],
+        "properties": { "item": { "$ref": "#/components/schemas/Item" } }
+      },
+      "ItemPage": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } },
+          "nextCursor": { "type": ["string", "null"] }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": [
+          "cursor",
+          "itemId",
+          "itemRevision",
+          "contract",
+          "correlationId",
+          "kind",
+          "actor",
+          "data",
+          "occurredAt"
+        ],
+        "properties": {
+          "cursor": { "type": "integer", "minimum": 1 },
+          "itemId": { "type": "string" },
+          "itemRevision": { "type": "integer", "minimum": 1 },
+          "contract": { "type": "string" },
+          "correlationId": { "type": ["string", "null"] },
+          "kind": { "type": "string" },
+          "actor": { "type": ["string", "null"] },
+          "data": { "$ref": "#/components/schemas/JsonValue" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "EventPage": {
+        "type": "object",
+        "required": ["events", "nextCursor"],
+        "properties": {
+          "events": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } },
+          "nextCursor": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["type", "title", "status", "code", "detail", "requestId"],
+        "properties": {
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" },
+          "code": { "type": "string" },
+          "detail": { "type": "string" },
+          "requestId": { "type": "string" },
+          "details": { "type": "object" }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid bearer credential",
+        "headers": { "WWW-Authenticate": { "schema": { "type": "string" } } },
+        "content": {
+          "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+        }
+      },
+      "Forbidden": {
+        "description": "Credential lacks the required scope",
+        "content": {
+          "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+        }
+      },
+      "NotFound": {
+        "description": "Attention item or route not found",
+        "content": {
+          "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+        }
+      },
+      "Conflict": {
+        "description": "Lifecycle, claim, parent, or idempotency conflict",
+        "content": {
+          "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+        }
+      }
+    }
+  }
+}

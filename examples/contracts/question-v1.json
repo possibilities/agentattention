@@ -1,0 +1,18 @@
+{
+  "contract": "com.example.question/v1",
+  "requestSchema": {
+    "type": "object",
+    "required": ["question"],
+    "properties": {
+      "question": { "type": "string" },
+      "context": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "resolutionSchema": {
+    "type": "object",
+    "required": ["answer"],
+    "properties": { "answer": {} },
+    "additionalProperties": false
+  }
+}
