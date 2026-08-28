@@ -6,15 +6,17 @@ export function parseCreateItem(value: unknown, now = new Date()): CreateItemInp
   rejectUnknown(input, [
     "contract",
     "title",
+    "context",
     "payload",
     "priority",
     "labels",
     "correlationId",
     "parentId",
-    "expiresAt",
+    "useBefore",
   ]);
   const contract = boundedString(input.contract, "contract", 1, 255);
   const title = boundedString(input.title, "title", 1, 500);
+  const context = optionalLongString(input.context, "context", 200_000);
   if (!Object.hasOwn(input, "payload")) {
     throw badRequest(
       "invalid_item",
@@ -29,19 +31,20 @@ export function parseCreateItem(value: unknown, now = new Date()): CreateItemInp
   const labels = input.labels === undefined ? {} : parseLabels(input.labels);
   const correlationId = optionalIdentifier(input.correlationId, "correlationId");
   const parentId = optionalIdentifier(input.parentId, "parentId");
-  const expiresAt = optionalTimestamp(input.expiresAt, "expiresAt");
-  if (expiresAt !== null && new Date(expiresAt).getTime() <= now.getTime()) {
-    throw badRequest("invalid_expiry", "expiresAt must be in the future");
+  const useBefore = optionalTimestamp(input.useBefore, "useBefore");
+  if (useBefore !== null && new Date(useBefore).getTime() <= now.getTime()) {
+    throw badRequest("invalid_use_before", "useBefore must be in the future");
   }
   return {
     contract,
     title,
+    context,
     payload: input.payload,
     priority,
     labels,
     correlationId,
     parentId,
-    expiresAt,
+    useBefore,
   };
 }
 
@@ -92,9 +95,37 @@ export function parseCancellation(value: unknown): { reason: string } {
   return { reason: boundedString(input.reason, "reason", 1, 1_000) };
 }
 
+export function parseReturn(value: unknown): {
+  claimId: string | null;
+  reason: string;
+  comment: string | null;
+} {
+  const input = requireRecord(value, "Request body must be a JSON object");
+  rejectUnknown(input, ["claimId", "reason", "comment"]);
+  const claimId =
+    input.claimId === undefined || input.claimId === null
+      ? null
+      : boundedString(input.claimId, "claimId", 1, 100);
+  const reason = boundedString(input.reason, "reason", 1, 64);
+  if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(reason)) {
+    throw badRequest(
+      "invalid_return_reason",
+      "reason must start with a lowercase letter and contain only lowercase letters, digits, ., _, or -",
+    );
+  }
+  const comment = optionalLongString(input.comment, "comment", 10_000);
+  return { claimId, reason, comment };
+}
+
 export function parseStatus(value: string | null): AttentionStatus | undefined {
   if (value === null || value === "") return undefined;
-  if (value === "open" || value === "resolved" || value === "cancelled" || value === "expired") {
+  if (
+    value === "open" ||
+    value === "resolved" ||
+    value === "returned" ||
+    value === "cancelled" ||
+    value === "expired"
+  ) {
     return value;
   }
   throw badRequest("invalid_filter", `Unknown status: ${value}`);
@@ -182,6 +213,15 @@ function optionalTimestamp(value: unknown, name: string): string | null {
     throw badRequest("invalid_timestamp", `${name} must be an RFC 3339 timestamp`);
   }
   return timestamp.toISOString();
+}
+
+function optionalLongString(value: unknown, name: string, maximum: number): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > maximum) {
+    throw badRequest("invalid_field", `${name} must be a string of at most ${maximum} characters`);
+  }
+  const normalized = value.trim();
+  return normalized.length === 0 ? null : normalized;
 }
 
 function boundedString(value: unknown, name: string, minimum: number, maximum: number): string {

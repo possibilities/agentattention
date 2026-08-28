@@ -18,6 +18,7 @@ interface ItemRow {
   id: string;
   contract: string;
   title: string;
+  context: string | null;
   payload_json: string;
   priority: number;
   labels_json: string;
@@ -27,7 +28,7 @@ interface ItemRow {
   created_by: string;
   created_at: string;
   updated_at: string;
-  expires_at: string | null;
+  use_before: string | null;
   revision: number;
   cancelled_by: string | null;
   cancelled_at: string | null;
@@ -39,6 +40,10 @@ interface ItemRow {
   resolution_json: string | null;
   resolved_by: string | null;
   resolved_at: string | null;
+  return_reason: string | null;
+  return_comment: string | null;
+  returned_by: string | null;
+  returned_at: string | null;
 }
 
 interface EventRow {
@@ -80,10 +85,15 @@ const ITEM_SELECT = `
     c.expires_at AS claim_expires_at,
     r.payload_json AS resolution_json,
     r.resolved_by,
-    r.resolved_at
+    r.resolved_at,
+    ro.reason AS return_reason,
+    ro.comment AS return_comment,
+    ro.returned_by,
+    ro.returned_at
   FROM attention_items i
   LEFT JOIN claims c ON c.item_id = i.id
   LEFT JOIN resolutions r ON r.item_id = i.id
+  LEFT JOIN return_outcomes ro ON ro.item_id = i.id
 `;
 
 export class AttentionStore {
@@ -117,12 +127,13 @@ export class AttentionStore {
     const normalized = {
       contract: input.contract,
       title: input.title,
+      context: input.context ?? null,
       payload: input.payload,
       priority: input.priority ?? 0,
       labels: input.labels ?? {},
       correlationId: input.correlationId ?? null,
       parentId: input.parentId ?? null,
-      expiresAt: input.expiresAt ?? null,
+      useBefore: input.useBefore ?? null,
     };
     const requestHash = hashJson(normalized);
     return this.write((context) => {
@@ -140,14 +151,15 @@ export class AttentionStore {
       this.db
         .query(
           `INSERT INTO attention_items
-            (id, contract, title, payload_json, priority, labels_json, correlation_id, parent_id,
-             status, created_by, created_at, updated_at, expires_at, revision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1)`,
+            (id, contract, title, context, payload_json, priority, labels_json, correlation_id,
+             parent_id, status, created_by, created_at, updated_at, use_before, revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1)`,
         )
         .run(
           id,
           normalized.contract,
           normalized.title,
+          normalized.context,
           JSON.stringify(normalized.payload),
           normalized.priority,
           JSON.stringify(normalized.labels),
@@ -156,7 +168,7 @@ export class AttentionStore {
           principalId,
           timestamp,
           timestamp,
-          normalized.expiresAt,
+          normalized.useBefore,
         );
       this.insertEvent(
         context,
@@ -327,7 +339,7 @@ export class AttentionStore {
       if (replay) return replay;
       const item = this.readItemOrNull(id);
       if (!item) throw notFound();
-      assertCanResolve(item, claimId, principalId);
+      assertCanFinish(item, claimId, principalId);
       const timestamp = this.timestamp();
       this.db
         .query(
@@ -343,6 +355,55 @@ export class AttentionStore {
         "item.resolved",
         principalId,
         claimId ? { claimId, resolution } : { resolution },
+        timestamp,
+      );
+      const result = this.readItem(id);
+      this.writeIdempotency(
+        principalId,
+        operation,
+        idempotencyKey,
+        requestHash,
+        result.id,
+        timestamp,
+      );
+      return result;
+    });
+  }
+
+  returnItem(
+    id: string,
+    claimId: string | null,
+    reason: string,
+    comment: string | null,
+    principalId: string,
+    idempotencyKey: string,
+  ): AttentionItem {
+    this.sweepExpired();
+    const request = { claimId, reason, comment };
+    const requestHash = hashJson(request);
+    const operation = `return:${id}`;
+    return this.write((context) => {
+      const replay = this.readIdempotency(principalId, operation, idempotencyKey, requestHash);
+      if (replay) return replay;
+      const item = this.readItemOrNull(id);
+      if (!item) throw notFound();
+      assertCanFinish(item, claimId, principalId, "return");
+      const timestamp = this.timestamp();
+      this.db
+        .query(
+          `INSERT INTO return_outcomes(item_id, reason, comment, returned_by, returned_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(id, reason, comment, principalId, timestamp);
+      this.db.query("DELETE FROM claims WHERE item_id = ?").run(id);
+      const revision = this.setTerminalStatus(id, "returned", timestamp);
+      this.insertEvent(
+        context,
+        id,
+        revision,
+        "item.returned",
+        principalId,
+        claimId ? { claimId, reason, comment } : { reason, comment },
         timestamp,
       );
       const result = this.readItem(id);
@@ -438,7 +499,7 @@ export class AttentionStore {
     const due = this.db
       .query<{ count: number }, [string, string]>(
         `SELECT
-          (SELECT COUNT(*) FROM attention_items WHERE status = 'open' AND expires_at IS NOT NULL AND expires_at <= ?)
+          (SELECT COUNT(*) FROM attention_items WHERE status = 'open' AND use_before IS NOT NULL AND use_before <= ?)
           + (SELECT COUNT(*) FROM claims WHERE expires_at <= ?) AS count`,
       )
       .get(timestamp, timestamp);
@@ -449,7 +510,7 @@ export class AttentionStore {
         .query<{ id: string; revision: number; claim_id: string | null }, [string]>(
           `SELECT i.id, i.revision, c.claim_id
            FROM attention_items i LEFT JOIN claims c ON c.item_id = i.id
-           WHERE i.status = 'open' AND i.expires_at IS NOT NULL AND i.expires_at <= ?`,
+           WHERE i.status = 'open' AND i.use_before IS NOT NULL AND i.use_before <= ?`,
         )
         .all(timestamp);
       for (const item of expiredItems) {
@@ -494,14 +555,18 @@ export class AttentionStore {
   private migrate(): void {
     const version =
       this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
-    if (version > 1) {
+    if (version > 2) {
       throw new Error(`Database schema version ${version} is newer than this binary supports`);
     }
-    if (version === 0) {
-      const migration = readFileSync(
-        resolve(import.meta.dir, "../migrations/0001_initial.sql"),
-        "utf8",
-      );
+    const migrations = [
+      resolve(import.meta.dir, "../migrations/0001_initial.sql"),
+      resolve(import.meta.dir, "../migrations/0002_attention_workflow.sql"),
+    ];
+    for (let next = version + 1; next <= migrations.length; next += 1) {
+      const migrationPath = migrations[next - 1];
+      if (!migrationPath) throw new Error(`Missing database migration ${next}`);
+      const migration = readFileSync(migrationPath, "utf8");
+      if (next === 2) this.db.exec("PRAGMA foreign_keys = OFF");
       this.db.exec("BEGIN IMMEDIATE");
       try {
         this.db.exec(migration);
@@ -509,7 +574,13 @@ export class AttentionStore {
       } catch (error) {
         this.db.exec("ROLLBACK");
         throw error;
+      } finally {
+        if (next === 2) this.db.exec("PRAGMA foreign_keys = ON");
       }
+    }
+    const foreignKeyFailures = this.db.query("PRAGMA foreign_key_check").all();
+    if (foreignKeyFailures.length > 0) {
+      throw new Error("Database migration left invalid foreign-key references");
     }
   }
 
@@ -554,7 +625,11 @@ export class AttentionStore {
     return this.itemRevision(id);
   }
 
-  private setTerminalStatus(id: string, status: "resolved" | "expired", timestamp: string): number {
+  private setTerminalStatus(
+    id: string,
+    status: "resolved" | "returned" | "expired",
+    timestamp: string,
+  ): number {
     this.db
       .query(
         "UPDATE attention_items SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
@@ -638,6 +713,7 @@ function rowToItem(row: ItemRow): AttentionItem {
     id: row.id,
     contract: row.contract,
     title: row.title,
+    context: row.context,
     payload: JSON.parse(row.payload_json) as JsonValue,
     priority: row.priority,
     labels: JSON.parse(row.labels_json) as Record<string, string>,
@@ -661,6 +737,15 @@ function rowToItem(row: ItemRow): AttentionItem {
             resolvedAt: row.resolved_at,
           }
         : null,
+    returnOutcome:
+      row.return_reason && row.returned_by && row.returned_at
+        ? {
+            reason: row.return_reason,
+            comment: row.return_comment,
+            returnedBy: row.returned_by,
+            returnedAt: row.returned_at,
+          }
+        : null,
     cancellation:
       row.cancellation_reason && row.cancelled_by && row.cancelled_at
         ? {
@@ -672,7 +757,7 @@ function rowToItem(row: ItemRow): AttentionItem {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    expiresAt: row.expires_at,
+    useBefore: row.use_before,
     revision: row.revision,
   };
 }
@@ -701,13 +786,18 @@ function assertHeldClaim(item: AttentionItem, claimId: string, holderId: string)
   }
 }
 
-function assertCanResolve(item: AttentionItem, claimId: string | null, principalId: string): void {
+function assertCanFinish(
+  item: AttentionItem,
+  claimId: string | null,
+  principalId: string,
+  operation: "resolve" | "return" = "resolve",
+): void {
   if (item.status !== "open") {
-    throw conflict("item_not_open", `Cannot resolve an item in ${item.status} state`);
+    throw conflict("item_not_open", `Cannot ${operation} an item in ${item.status} state`);
   }
   if (item.claim) {
     if (!claimId) {
-      throw conflict("claim_required", "The active claim id is required to resolve this item");
+      throw conflict("claim_required", `The active claim id is required to ${operation} this item`);
     }
     assertHeldClaim(item, claimId, principalId);
     return;

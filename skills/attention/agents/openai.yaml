@@ -1,0 +1,6 @@
+interface:
+  display_name: "Attention"
+  short_description: "Queue durable human handoffs and wait for outcomes"
+  default_prompt: "Use $attention to hand blocked work to the human and resume from durable outcomes."
+policy:
+  allow_implicit_invocation: true

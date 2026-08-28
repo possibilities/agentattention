@@ -2,71 +2,80 @@
 
 This guide is for an agent or tool that discovers it needs a human.
 
-## Negotiate the contract elsewhere
+## Prefer the bounded first-party contracts
 
-Choose a stable, namespaced `contract` such as
-`com.example.plan-approval/v1`. Its producer and handler must separately agree
-on the request payload and expected resolution. That agreement can live in a
-skill, package, repository document, or JSON Schema file.
+Use the CLI helpers for the interactions Agentattention's TUI understands:
 
-The daemon stores the identifier and JSON values without resolving the
-identifier or validating either value. Include a version in the identifier;
-never change an existing contract's meaning in place.
+```bash
+agentattention create question --title "Choose an account" \
+  --context "The next application requires a Workday account." \
+  --question "Which email address should this application use?"
 
-## Create once
+agentattention create approval --title "Approve this plan" --document ./plan.md
 
-`POST /v1/items` requires `items:create` and an `Idempotency-Key`. Repeating
-the same request with the same principal and key returns the same item in its
-current state.
-Reusing the key for different content returns `409 idempotency_conflict`.
-
-```json
-{
-  "contract": "com.example.plan-approval/v1",
-  "title": "Approve the database migration plan",
-  "payload": {
-    "summary": "Add an index concurrently, then remove the old index",
-    "planUrl": "file:///workspace/docs/migration-plan.md"
-  },
-  "priority": 20,
-  "labels": {
-    "project": "billing",
-    "lane": "blocking"
-  },
-  "correlationId": "billing-migration-2026-08",
-  "parentId": null,
-  "expiresAt": "2026-08-28T18:00:00.000Z"
-}
+agentattention create browser --title "Complete Workday sign-in" \
+  --target jobsearch --action "Sign in and leave the application form open."
 ```
 
-Envelope fields are deliberately small:
+The helpers validate these exact first-party contracts before sending them:
+
+- `dev.agentattention/question/v1`
+- `dev.agentattention/document-approval/v1`
+- `dev.agentattention/browser-interaction/v1`
+
+For several questions, repeat `--question` or pass a complete validated payload
+with `--payload-file`. A single question can have repeatable
+`--choice value=Human label` options. Document input and long context can come
+from a file. The browser payload contains only an Agentbrowse Browser target
+name and requested action—never cookies, CDP URLs, Live View credentials, or a
+reusable secret.
+
+## Keep the envelope useful to both humans and agents
+
+Every item requires a concise `title`. Add optional, potentially long `context`
+that explains why the human is needed, relevant constraints, and what state the
+agent will expect afterward. The item processor displays both before asking for
+the answer or handing over the browser.
+
+Shared envelope fields are:
 
 | Field | Purpose |
 |---|---|
-| `contract` | Opaque negotiated contract identifier, normally versioned |
-| `title` | Human-readable inbox text |
-| `payload` | Any JSON value; semantics belong to the contract |
+| `contract` | Opaque, versioned agreement between producer and processor |
+| `title` | Short queue label a human can scan |
+| `context` | Optional long explanation shown inside the processor |
+| `payload` | Contract-specific JSON |
 | `priority` | Higher values sort first; it is not scheduling policy |
-| `labels` | Exact-match routing/filter hints, at most 32 string pairs |
-| `correlationId` | Groups related items and events for one progenitor/workflow |
+| `labels` | Exact-match routing and cleanup hints, at most 32 string pairs |
+| `correlationId` | Groups the items from one round or durable workflow |
 | `parentId` | Links a follow-up to an existing attention item |
-| `expiresAt` | Optional terminal deadline, distinct from a claim lease |
+| `useBefore` | Optional timestamp after which the service expires an open item |
 
-Put browser references, fallback breadcrumbs, artifact pointers, or display
-hints inside the opaque payload. Avoid putting passwords, cookies, bearer
-tokens, or other reusable secrets in it: version 1 stores SQLite content in
-plaintext.
+The daemon stores `contract` and JSON without interpreting them. Generic clients
+may still create an externally negotiated contract with
+`agentattention create --file ITEM.json`; retain a version in the identifier
+and validate both sides outside the daemon.
 
-## Continue other work
+## Create once
 
-Keep the returned item id and the latest event cursor with your own durable
-work state. A producer can create several independent items under one
-`correlationId`, continue autonomous work, and later consume matching events.
-The daemon does not decide whether the producer should block.
+The HTTP `POST /v1/items` operation requires `items:create` and an
+`Idempotency-Key`. Repeating identical content with the same principal and key
+returns the item in its current state. Reusing the key for different content
+returns `409 idempotency_conflict`.
 
-## Cancel obsolete work
+Keep the returned item id and correlation id with the producing workflow. An
+agent can create several independent items, continue everything else it can do,
+and then wait on all of them with one command.
 
-`POST /v1/items/:id/cancellation` requires `items:cancel`, an
-`Idempotency-Key`, and a specific reason. Cancellation wins only while the item
-is open, clears any claim, and emits `item.cancelled`. A terminal item never
-reopens; create a follow-up item instead.
+## React to terminal outcomes
+
+- `resolved`: validate and consume the contract-specific resolution.
+- `returned`: inspect `returnOutcome.reason` and optional comment. For `stale`,
+  rebuild the interaction state and create a fresh item rather than reopening
+  the old one.
+- `cancelled`: the producer or operator withdrew the work.
+- `expired`: `useBefore` passed while the item was still open.
+
+Cancel obsolete open items with `agentattention cancel ID --reason TEXT`, or
+preview a narrowly filtered batch with `agentattention prune FILTERS` before
+adding `--apply --reason TEXT`. Terminal items never reopen.

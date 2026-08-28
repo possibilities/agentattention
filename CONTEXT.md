@@ -14,6 +14,17 @@
 - **Resolution**: The opaque JSON value returned when a handler completes an
   attention item. _Avoid_: response (ambiguous with an HTTP response), result
   schema (validation belongs to the negotiated contract).
+- **Return outcome**: A terminal hand-back to the producer when a handler
+  cannot complete an attention item, carrying a mechanical reason and optional
+  comment. _Avoid_: rejection (the item may simply be stale), failure (the
+  producer decides what the outcome means).
+- **Use-before time**: An optional producer-supplied timestamp after which the
+  service mechanically expires an open attention item. _Avoid_: staleness
+  detection (the service compares only the clock), deadline (no work is
+  scheduled or executed here).
+- **First-party contract**: One of the bounded contracts whose payload and
+  resolution are validated by Agentattention's client and TUI code, never by
+  the daemon. _Avoid_: registered contract, server schema.
 - **Principal**: The identity attached to a bearer credential and recorded on
   mutations. _Avoid_: user (a principal may be an agent or tool), token (the
   secret authenticates the principal but is not its identity).

@@ -9,6 +9,7 @@ export const ALL_SCOPES = [
   "items:read",
   "items:claim",
   "items:resolve",
+  "items:return",
   "items:cancel",
   "events:read",
 ] as const;
@@ -30,6 +31,16 @@ export interface AppConfig {
   credentials: CredentialConfig[];
 }
 
+export interface ClientConfig {
+  version: 1;
+  url: string;
+  token: string;
+  principal: {
+    id: string;
+    name: string;
+  };
+}
+
 export function defaultConfigPath(): string {
   const configured = process.env.AGENTATTENTION_CONFIG;
   return configured
@@ -41,21 +52,44 @@ export function defaultDatabasePath(): string {
   return resolve(homedir(), ".local/state/agentattention/agentattention.sqlite3");
 }
 
-export function createInitialConfig(): { config: AppConfig; token: string } {
-  const token = createToken();
+export function defaultClientConfigPath(): string {
+  const configured = process.env.AGENTATTENTION_CLIENT_CONFIG;
+  return configured
+    ? resolve(configured)
+    : resolve(homedir(), ".config/agentattention/client.json");
+}
+
+export function createInitialConfig(): {
+  config: AppConfig;
+  administratorToken: string;
+  client: ClientConfig;
+} {
+  const administratorToken = createToken();
+  const clientToken = createToken();
+  const administrator = {
+    id: createId("cred"),
+    name: "administrator",
+    tokenHash: hashToken(administratorToken),
+    scopes: ["admin"],
+  };
+  const localClient = {
+    id: createId("cred"),
+    name: "local client",
+    tokenHash: hashToken(clientToken),
+    scopes: [...ALL_SCOPES],
+  };
   return {
-    token,
+    administratorToken,
     config: {
       server: { host: "127.0.0.1", port: 7331, maxBodyBytes: 1_048_576 },
       database: defaultDatabasePath(),
-      credentials: [
-        {
-          id: createId("cred"),
-          name: "administrator",
-          tokenHash: hashToken(token),
-          scopes: ["admin"],
-        },
-      ],
+      credentials: [administrator, localClient],
+    },
+    client: {
+      version: 1,
+      url: "http://127.0.0.1:7331",
+      token: clientToken,
+      principal: { id: localClient.id, name: localClient.name },
     },
   };
 }
@@ -80,6 +114,71 @@ export function saveConfig(path: string, config: AppConfig): void {
   writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   chmodSync(temporary, 0o600);
   renameSync(temporary, path);
+}
+
+export function loadClientConfig(path = defaultClientConfigPath()): ClientConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw badRequest(
+      "client_config_unreadable",
+      `Cannot read client configuration at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return validateClientConfig(parsed);
+}
+
+export function saveClientConfig(path: string, config: ClientConfig): void {
+  validateClientConfig(config);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, path);
+}
+
+export function validateClientConfig(value: unknown): ClientConfig {
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    typeof value.url !== "string" ||
+    typeof value.token !== "string" ||
+    !isRecord(value.principal) ||
+    typeof value.principal.id !== "string" ||
+    typeof value.principal.name !== "string"
+  ) {
+    throw badRequest("invalid_client_config", "Client configuration has an invalid shape");
+  }
+  let url: URL;
+  try {
+    url = new URL(value.url);
+  } catch {
+    throw badRequest("invalid_client_config", "Client configuration URL is invalid");
+  }
+  if (
+    url.protocol !== "http:" ||
+    !new Set(["127.0.0.1", "[::1]", "localhost"]).has(url.hostname) ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw badRequest(
+      "invalid_client_config",
+      "Client configuration URL must be a loopback HTTP origin",
+    );
+  }
+  if (!value.token.startsWith("aat_") || value.token.length > 200) {
+    throw badRequest("invalid_client_config", "Client configuration token is invalid");
+  }
+  return {
+    version: 1,
+    url: url.origin,
+    token: value.token,
+    principal: { id: value.principal.id, name: value.principal.name },
+  };
 }
 
 export function addCredential(

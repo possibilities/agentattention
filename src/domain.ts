@@ -1,7 +1,7 @@
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
-export type AttentionStatus = "open" | "resolved" | "cancelled" | "expired";
+export type AttentionStatus = "open" | "resolved" | "returned" | "cancelled" | "expired";
 
 export interface Principal {
   id: string;
@@ -28,10 +28,18 @@ export interface Cancellation {
   cancelledAt: string;
 }
 
+export interface ReturnOutcome {
+  reason: string;
+  comment: string | null;
+  returnedBy: string;
+  returnedAt: string;
+}
+
 export interface AttentionItem {
   id: string;
   contract: string;
   title: string;
+  context: string | null;
   payload: JsonValue;
   priority: number;
   labels: Record<string, string>;
@@ -40,11 +48,12 @@ export interface AttentionItem {
   status: AttentionStatus;
   claim: Claim | null;
   resolution: Resolution | null;
+  returnOutcome: ReturnOutcome | null;
   cancellation: Cancellation | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
-  expiresAt: string | null;
+  useBefore: string | null;
   revision: number;
 }
 
@@ -63,12 +72,13 @@ export interface AttentionEvent {
 export interface CreateItemInput {
   contract: string;
   title: string;
+  context?: string | null;
   payload: JsonValue;
   priority?: number;
   labels?: Record<string, string>;
   correlationId?: string | null;
   parentId?: string | null;
-  expiresAt?: string | null;
+  useBefore?: string | null;
 }
 
 export interface ItemFilters {

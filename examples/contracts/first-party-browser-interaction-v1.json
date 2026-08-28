@@ -1,0 +1,8 @@
+{
+  "contract": "dev.agentattention/browser-interaction/v1",
+  "payload": {
+    "targetName": "jobsearch",
+    "requestedAction": "Sign in and leave the jobs page ready for automation."
+  },
+  "resolution": { "outcome": "completed" }
+}

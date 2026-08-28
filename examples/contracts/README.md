@@ -1,14 +1,16 @@
-# Example external contracts
+# Contract examples
 
-These files demonstrate agreements that producers and handlers could share.
-`agentattention` never loads, registers, dereferences, or validates them.
+The `first-party-*.json` files document the bounded contracts validated by
+Agentattention's CLI and TUI:
 
-- `question-v1.json` — answer a bounded question
-- `plan-approval-v1.json` — approve, reject, or comment on a plan
-- `browser-captcha-v1.json` — prefer a live browser handoff, retain fallback breadcrumbs
-- `cover-letter-review-v1.json` — batch-friendly approval or comment
-- `permission-v1.json` — approve or deny an agent action
+- `first-party-question-v1.json`
+- `first-party-document-approval-v1.json`
+- `first-party-browser-interaction-v1.json`
 
-Each example contains a request schema and a resolution schema for client-side
-validation. Its `contract` value is the only part copied into the attention
-item envelope.
+The remaining `com.example.*` files demonstrate the service's retained generic
+capability. They are agreements an external producer and processor could
+share; the daemon never loads, registers, dereferences, or validates them.
+
+An attention envelope copies only the versioned `contract` identifier and a
+matching payload. Never put reusable browser credentials, cookies, passwords,
+or bearer tokens in one of these files or in an item.

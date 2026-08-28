@@ -1,39 +1,45 @@
 # Waiting and resuming
 
-Producers can poll one attention item or consume the durable event feed. Both
-read the same transactional state.
+An agent normally does as much autonomous work as possible, creates every
+attention item it needs, and then waits for whichever terminal condition lets
+it continue.
 
-## Poll one item
+## Use the agent-friendly wait command
 
-`GET /v1/items/:id` returns an `ETag` based on the item revision. Send it as
-`If-None-Match` on the next request; unchanged state returns `304`.
+```bash
+agentattention wait attn_one attn_two --json
+agentattention wait attn_one attn_two --all --timeout 30m --json
+agentattention wait --correlation jobsearch-round-42 --all --json
+```
 
-Terminal states are `resolved`, `cancelled`, and `expired`. For a resolved
-item, validate `resolution.payload` against the contract negotiated outside
-the daemon before using it.
+The default returns when any watched item becomes terminal; `--all` waits for
+all. `--timeout` accepts milliseconds, seconds, minutes, or hours. The command
+returns a structured reason (`terminal` or `timeout`), event cursor, every
+current item snapshot, and the terminal subset.
 
-## Replay events
+Waiting is race-free: the client captures the latest durable event cursor
+before its first item snapshot. If no terminal condition is already true, it
+streams from that earlier cursor, so a transition between the snapshot and
+subscription is replayed rather than lost. A disconnected stream reconnects
+from the last observed cursor.
 
-`GET /v1/events?after=123` returns events with cursors greater than 123 and a
-`nextCursor`. Filters for item, contract, and correlation id apply equally to
-replay and streaming.
+Terminal states are `resolved`, `returned`, `cancelled`, and `expired`.
+Validate a resolved payload against its client-side contract. Treat a returned
+item as producer-owned recovery, not as a failed resolution; a stale browser
+handoff commonly means recreating the breadcrumb trail and submitting a new
+attention item.
 
-Persist a cursor only after your own effects for that event commit. Delivery
-is at-least-once: a crash between your effect and cursor persistence can cause
-the event to be seen again, so downstream work needs its own idempotency key.
+## Poll or consume events directly
 
-## Stream updates
+`GET /v1/items/:id` returns an item-revision `ETag`; send it as
+`If-None-Match` and unchanged state returns `304`.
 
-`GET /v1/events/stream?after=123` is Server-Sent Events. Each frame uses the
-durable cursor as its SSE id, the event kind as its SSE event name, and the
-complete event object as JSON data.
+`GET /v1/events?after=123` replays cursors greater than 123.
+`GET /v1/events/stream?after=123` is Server-Sent Events using the durable
+cursor as frame id. Persist a cursor only after your own effect commits;
+delivery is at-least-once and downstream work needs its own idempotency.
 
-Reconnect with either `after=<persisted cursor>` or `Last-Event-ID`. The query
-parameter takes precedence. Heartbeats are SSE comments and do not advance the
-cursor. A disconnect never means the underlying attention item changed; replay
-from the last committed cursor.
-
-Common events are:
+Lifecycle events include:
 
 - `item.created`
 - `item.claimed`
@@ -41,8 +47,9 @@ Common events are:
 - `item.claim.released`
 - `item.claim.expired`
 - `item.resolved`
+- `item.returned`
 - `item.cancelled`
 - `item.expired`
 
-The feed includes opaque payloads and resolutions. Protect an `events:read`
-credential as carefully as an `items:read` credential.
+Event data includes opaque payloads and outcomes. Protect `events:read` as
+carefully as `items:read`.

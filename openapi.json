@@ -229,6 +229,36 @@
         }
       }
     },
+    "/v1/items/{itemId}/return": {
+      "post": {
+        "operationId": "returnItem",
+        "summary": "Return an attention item to its producer",
+        "description": "Requires items:return. A claimed item requires the holder's claim id; an unclaimed item can be returned atomically without one. The service records the mechanical reason but does not infer what it means.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ItemId" },
+          { "$ref": "#/components/parameters/IdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ReturnRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returned item, or an idempotent replay",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ItemResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
     "/v1/items/{itemId}/cancellation": {
       "post": {
         "operationId": "cancelItem",
@@ -396,7 +426,10 @@
     },
     "schemas": {
       "JsonValue": {},
-      "Status": { "type": "string", "enum": ["open", "resolved", "cancelled", "expired"] },
+      "Status": {
+        "type": "string",
+        "enum": ["open", "resolved", "returned", "cancelled", "expired"]
+      },
       "Health": {
         "type": "object",
         "required": ["status"],
@@ -416,6 +449,7 @@
         "properties": {
           "contract": { "type": "string", "minLength": 1, "maxLength": 255 },
           "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "context": { "type": ["string", "null"], "maxLength": 200000 },
           "payload": { "$ref": "#/components/schemas/JsonValue" },
           "priority": { "type": "integer", "minimum": -1000000, "maximum": 1000000, "default": 0 },
           "labels": {
@@ -425,7 +459,7 @@
           },
           "correlationId": { "type": ["string", "null"], "maxLength": 255 },
           "parentId": { "type": ["string", "null"], "maxLength": 255 },
-          "expiresAt": { "type": ["string", "null"], "format": "date-time" }
+          "useBefore": { "type": ["string", "null"], "format": "date-time" }
         },
         "additionalProperties": false
       },
@@ -460,6 +494,21 @@
         },
         "additionalProperties": false
       },
+      "ReturnRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {
+          "claimId": { "type": ["string", "null"] },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+          },
+          "comment": { "type": ["string", "null"], "maxLength": 10000 }
+        },
+        "additionalProperties": false
+      },
       "CancelRequest": {
         "type": "object",
         "required": ["reason"],
@@ -485,6 +534,21 @@
           "resolvedAt": { "type": "string", "format": "date-time" }
         }
       },
+      "ReturnOutcome": {
+        "type": "object",
+        "required": ["reason", "comment", "returnedBy", "returnedAt"],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+          },
+          "comment": { "type": ["string", "null"], "maxLength": 10000 },
+          "returnedBy": { "type": "string" },
+          "returnedAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "Cancellation": {
         "type": "object",
         "required": ["reason", "cancelledBy", "cancelledAt"],
@@ -500,6 +564,7 @@
           "id",
           "contract",
           "title",
+          "context",
           "payload",
           "priority",
           "labels",
@@ -508,17 +573,19 @@
           "status",
           "claim",
           "resolution",
+          "returnOutcome",
           "cancellation",
           "createdBy",
           "createdAt",
           "updatedAt",
-          "expiresAt",
+          "useBefore",
           "revision"
         ],
         "properties": {
           "id": { "type": "string" },
           "contract": { "type": "string" },
           "title": { "type": "string" },
+          "context": { "type": ["string", "null"], "maxLength": 200000 },
           "payload": { "$ref": "#/components/schemas/JsonValue" },
           "priority": { "type": "integer" },
           "labels": { "type": "object", "additionalProperties": { "type": "string" } },
@@ -529,13 +596,16 @@
           "resolution": {
             "oneOf": [{ "$ref": "#/components/schemas/Resolution" }, { "type": "null" }]
           },
+          "returnOutcome": {
+            "oneOf": [{ "$ref": "#/components/schemas/ReturnOutcome" }, { "type": "null" }]
+          },
           "cancellation": {
             "oneOf": [{ "$ref": "#/components/schemas/Cancellation" }, { "type": "null" }]
           },
           "createdBy": { "type": "string" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
-          "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+          "useBefore": { "type": ["string", "null"], "format": "date-time" },
           "revision": { "type": "integer", "minimum": 1 }
         }
       },

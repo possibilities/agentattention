@@ -25,6 +25,7 @@ describe("HTTP API", () => {
       body: {
         contract: "com.example.cover-letter-review/v3",
         title: "Review Acme cover letter",
+        context: "Check the tone before this application is submitted.",
         payload: { draft: "Dear Acme", choices: ["approve", "comment"] },
         correlationId: "application-acme",
       },
@@ -33,6 +34,7 @@ describe("HTTP API", () => {
     const createdBody = await create.json();
     const item = createdBody.item;
     expect(item.payload.draft).toBe("Dear Acme");
+    expect(item.context).toBe("Check the tone before this application is submitted.");
 
     const claim = await api(handler, `/v1/items/${item.id}/claim`, {
       method: "POST",
@@ -113,6 +115,44 @@ describe("HTTP API", () => {
     });
     expect(forbidden.status).toBe(403);
     expect((await forbidden.json()).code).toBe("forbidden");
+  });
+
+  test("returns a claimed item without interpreting why it could not be handled", async () => {
+    const { handler } = service();
+    const create = await api(handler, "/v1/items", {
+      method: "POST",
+      idempotencyKey: "return-http-create",
+      body: {
+        contract: "com.example.browser/v1",
+        title: "Complete sign in",
+        payload: { targetName: "research" },
+      },
+    });
+    const id = (await create.json()).item.id;
+    const claim = await api(handler, `/v1/items/${id}/claim`, {
+      method: "POST",
+      body: { leaseSeconds: 120 },
+    });
+    const claimId = (await claim.json()).item.claim.id;
+    const missingClaim = await api(handler, `/v1/items/${id}/return`, {
+      method: "POST",
+      idempotencyKey: "return-http-missing-claim",
+      body: { reason: "stale" },
+    });
+    expect(missingClaim.status).toBe(409);
+    expect((await missingClaim.json()).detail).toContain("required to return this item");
+
+    const returned = await api(handler, `/v1/items/${id}/return`, {
+      method: "POST",
+      idempotencyKey: "return-http-item",
+      body: { claimId, reason: "stale", comment: "The navigation changed." },
+    });
+
+    expect(returned.status).toBe(200);
+    expect((await returned.json()).item).toMatchObject({
+      status: "returned",
+      returnOutcome: { reason: "stale", comment: "The navigation changed." },
+    });
   });
 
   test("returns problem details for invalid envelopes and idempotency reuse", async () => {

@@ -10,6 +10,7 @@ import {
   parseCreateItem,
   parsePositiveInteger,
   parseResolution,
+  parseReturn,
   parseStatus,
   validateIdempotencyKey,
 } from "./validation.ts";
@@ -59,7 +60,7 @@ export function createHttpHandler(
       }
 
       const match = url.pathname.match(
-        /^\/v1\/items\/([^/]+)(?:\/(claim|resolution|cancellation))?$/,
+        /^\/v1\/items\/([^/]+)(?:\/(claim|resolution|return|cancellation))?$/,
       );
       if (match) {
         const id = decodePathSegment(match[1] ?? "");
@@ -106,6 +107,16 @@ export function createHttpHandler(
           const key = validateIdempotencyKey(request.headers.get("idempotency-key"));
           return itemResponse(
             store.resolveItem(id, body.claimId, body.resolution, principal.id, key),
+            200,
+            requestId,
+          );
+        }
+        if (request.method === "POST" && operation === "return") {
+          const principal = auth.authenticate(request, "items:return");
+          const body = parseReturn(await readJson(request, config.server.maxBodyBytes));
+          const key = validateIdempotencyKey(request.headers.get("idempotency-key"));
+          return itemResponse(
+            store.returnItem(id, body.claimId, body.reason, body.comment, principal.id, key),
             200,
             requestId,
           );

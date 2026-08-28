@@ -1,0 +1,12 @@
+{
+  "contract": "dev.agentattention/document-approval/v1",
+  "payload": {
+    "format": "markdown",
+    "document": "# Plan\n\n1. Rebuild the stale browser state.\n2. Continue the workflow."
+  },
+  "approvedResolution": { "decision": "approved" },
+  "changesRequestedResolution": {
+    "decision": "changes_requested",
+    "comment": "Explain how the browser target is recovered."
+  }
+}

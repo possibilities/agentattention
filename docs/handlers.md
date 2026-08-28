@@ -1,73 +1,82 @@
-# Building handlers
+# Building and running processors
 
-A handler may be a human inbox, an agent that can answer a contract directly,
-an agent walking a human through a response, or a tool that redirects the
-human to another live application. The daemon treats them identically.
+A processor presents one attention item and produces one terminal decision.
+Agentattention ships standalone processors for its three first-party contracts
+and a queue TUI that foregrounds them one at a time.
 
-## Select outside the service
+## Drain the human queue
 
-Find candidates with `GET /v1/items?status=open`. Filters include exact
-`contract`, `correlationId`, repeated `label=key=value`, and claim state.
-Results sort by priority descending and then creation time. The cursor preserves
-that ordering.
+Run:
 
-The list API supplies storage primitives, not a dequeue policy. A handler may
-choose FIFO, batch by contract, present a manual lane, or feed selected items
-to another agent.
-
-## Claim before a long interaction
-
-```http
-POST /v1/items/attn_…/claim
-Authorization: Bearer …
-Content-Type: application/json
-
-{"leaseSeconds":300}
+```bash
+agentattention tui
 ```
 
-Claims are optional but recommended whenever selection and resolution are not
-one immediate operation. The returned item contains the claim id. A second claimant receives
-`409 already_claimed`. Repeating the claim as the same principal is
-idempotent but does not extend the lease.
+The queue lists open items in service order and marks unsupported external
+contracts. Selecting a supported item suspends the queue renderer, launches
+`agentattention process ID` with inherited terminal I/O, then resumes and
+refreshes the queue when that child exits. Each standalone processor can also
+be run directly.
 
-Renew with `PATCH /v1/items/:id/claim` and release with
-`DELETE /v1/items/:id/claim`. Both require the claim id. If a lease expires,
-the daemon emits `item.claim.expired` and another handler may claim the item.
-Use a lease long enough for the human interaction and renew it while the
-handler is demonstrably alive.
+The question processor supports one or several required free-text or
+single-choice answers. The document processor approves or requests changes
+with a required comment. The browser processor first shows the item's title,
+context, requested action, and exact target, then connects Agentbrowse's live
+surface and requests human control. It does not select or create a different
+Browser target.
 
-## Interpret the negotiated contract
+All actions are discoverable through `ctrl+k`, including completion, returning
+stale, and leaving without resolving. Pointer actions mirror command rows. The
+TUIs do not emit sound or notifications.
 
-Dispatch on the exact `contract` identifier. The handler—not the daemon—must:
+## Claim around a long interaction
 
-- reject an unsupported contract version;
-- validate the payload before presenting or acting on it;
-- validate the resolution it is about to submit;
-- understand live references and fallback recovery instructions;
-- decide whether an agent may answer directly or must involve a human.
+The first-party dispatcher validates the payload before claiming. It then:
 
-A malformed item remains open until a producer cancels it or it expires. A
-handler should release its claim and surface a clear diagnostic rather than
-inventing a resolution.
+1. claims for five minutes;
+2. renews every two minutes while the processor is active;
+3. resolves or returns using that exact claim id; and
+4. releases the claim if the human goes back, rendering fails, or submission
+   does not commit.
 
-## Resolve atomically
+Other processors should follow the same pattern. A claim is optional for an
+immediate atomic handler but recommended whenever selection and completion are
+separate. A second principal receives `409 already_claimed`. An expired lease
+emits `item.claim.expired` and lets another processor claim the item.
+
+## Resolve or return
+
+Resolution is an opaque contract value:
 
 ```http
 POST /v1/items/attn_…/resolution
 Authorization: Bearer …
-Idempotency-Key: review-session-42-submit
+Idempotency-Key: processor-submit-42
 Content-Type: application/json
 
-{
-  "claimId":"clm_…",
-  "resolution":{"decision":"comment","comment":"Make the opening concrete."}
-}
+{"claimId":"clm_…","resolution":{"decision":"approved"}}
 ```
 
-If an item is claimed, only the active claim holder can resolve it and must
-provide `claimId`. An immediate handler may resolve an unclaimed item without
-a claim id; concurrent attempts are serialized and only one terminal
-transition wins. The terminal transition, opaque resolution, claim removal,
-event, and idempotency record commit together.
-Retry the identical request after a lost response; do not mint a new key until
-you know the first attempt did not commit.
+When the request cannot be completed, use the distinct terminal return
+outcome:
+
+```http
+POST /v1/items/attn_…/return
+Authorization: Bearer …
+Idempotency-Key: processor-return-42
+Content-Type: application/json
+
+{"claimId":"clm_…","reason":"stale","comment":"The form navigated away."}
+```
+
+The daemon records a mechanical reason and never decides what it means. The
+producer owns recovery. Both operations may act atomically on an unclaimed item
+when `claimId` is null; if a claim exists, only its holder may finish it.
+
+## External contracts remain possible
+
+The service does not register or route contracts. An external processor must
+dispatch on an exact versioned identifier, validate payload and resolution,
+and decide whether it can involve a human safely. If malformed input cannot be
+processed, release the claim and surface a diagnostic; do not invent a
+resolution.

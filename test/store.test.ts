@@ -1,5 +1,6 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { ServiceError } from "../src/errors.ts";
@@ -20,6 +21,7 @@ describe("AttentionStore", () => {
     const input = {
       contract: "example.question/v7",
       title: "Choose a deployment",
+      context: "The release train is waiting on this choice.",
       payload: { unexpected: [1, true, null, { nested: "untouched" }] },
       labels: { project: "orbiter" },
     };
@@ -28,6 +30,7 @@ describe("AttentionStore", () => {
 
     expect(replay).toEqual(created);
     expect(created.payload).toEqual(input.payload);
+    expect(created.context).toBe(input.context);
     expect(store.listEvents({ after: 0, limit: 100 }).events.map((event) => event.kind)).toEqual([
       "item.created",
     ]);
@@ -113,6 +116,53 @@ describe("AttentionStore", () => {
     expect(resolved.resolution?.payload).toEqual(["also", { anything: true }]);
   });
 
+  test("returns an item with a mechanical reason and optional producer context", () => {
+    const store = memoryStore();
+    const item = store.createItem(
+      {
+        contract: "example.browser-interaction/v1",
+        title: "Sign in",
+        context: "Use the account selected for this search.",
+        payload: { targetName: "research" },
+      },
+      "producer",
+      "return-create",
+    );
+    const claimed = store.claimItem(item.id, "handler", 300);
+    const returned = store.returnItem(
+      item.id,
+      claimed.claim?.id ?? "",
+      "stale",
+      "The page no longer shows the sign-in form.",
+      "handler",
+      "return-item",
+    );
+
+    expect(returned.status).toBe("returned");
+    expect(returned.returnOutcome).toEqual({
+      reason: "stale",
+      comment: "The page no longer shows the sign-in form.",
+      returnedBy: "handler",
+      returnedAt: expect.any(String),
+    });
+    expect(returned.claim).toBeNull();
+    expect(
+      store.returnItem(
+        item.id,
+        claimed.claim?.id ?? "",
+        "stale",
+        "The page no longer shows the sign-in form.",
+        "handler",
+        "return-item",
+      ),
+    ).toEqual(returned);
+    expect(store.listEvents({ after: 0, limit: 100 }).events.map((event) => event.kind)).toEqual([
+      "item.created",
+      "item.claimed",
+      "item.returned",
+    ]);
+  });
+
   test("expires claims and items using durable events", () => {
     let current = new Date("2026-08-27T12:00:00.000Z");
     const store = memoryStore(() => current);
@@ -127,7 +177,7 @@ describe("AttentionStore", () => {
         contract: "example.question/v1",
         title: "Short lived",
         payload: null,
-        expiresAt: "2026-08-27T12:00:08.000Z",
+        useBefore: "2026-08-27T12:00:08.000Z",
       },
       "producer",
       "expiry-item",
@@ -241,6 +291,97 @@ describe("AttentionStore", () => {
     stores.push(second);
     expect(second.getItem(created.id).payload).toEqual({ durable: true });
     expect(second.latestEventCursor()).toBe(1);
+  });
+
+  test("migrates a schema-v1 database without losing items or related records", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "agentattention-migration-"));
+    directories.push(directory);
+    const path = resolve(directory, "attention.sqlite3");
+    const fixture = new Database(path, { create: true, strict: true });
+    fixture.exec(readFileSync(resolve(import.meta.dir, "../migrations/0001_initial.sql"), "utf8"));
+    fixture
+      .query(
+        `INSERT INTO attention_items
+          (id, contract, title, payload_json, priority, labels_json, correlation_id, parent_id,
+           status, created_by, created_at, updated_at, expires_at, revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "attn_v1",
+        "example.migrated/v1",
+        "Preserve me",
+        JSON.stringify({ from: "v1" }),
+        7,
+        JSON.stringify({ project: "migration" }),
+        "round-v1",
+        null,
+        "open",
+        "producer",
+        "2026-08-28T12:00:00.000Z",
+        "2026-08-28T12:00:00.000Z",
+        "2099-01-01T00:00:00.000Z",
+        2,
+      );
+    fixture
+      .query(
+        `INSERT INTO claims(item_id, claim_id, holder_id, claimed_at, expires_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "attn_v1",
+        "claim_v1",
+        "handler",
+        "2026-08-28T12:00:00.000Z",
+        "2099-01-01T00:00:00.000Z",
+      );
+    fixture
+      .query(
+        `INSERT INTO events(item_id, item_revision, kind, actor_id, data_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "attn_v1",
+        2,
+        "item.claimed",
+        "handler",
+        JSON.stringify({ claimId: "claim_v1" }),
+        "2026-08-28T12:00:00.000Z",
+      );
+    fixture
+      .query(
+        `INSERT INTO idempotency
+          (principal_id, operation, idempotency_key, request_hash, item_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "producer",
+        "create",
+        "v1-create",
+        "fixture-hash",
+        "attn_v1",
+        "2026-08-28T12:00:00.000Z",
+      );
+    fixture.close();
+
+    const migrated = new AttentionStore(path, {
+      now: () => new Date("2026-08-28T13:00:00.000Z"),
+    });
+    stores.push(migrated);
+    const item = migrated.getItem("attn_v1");
+    expect(item).toMatchObject({
+      title: "Preserve me",
+      context: null,
+      payload: { from: "v1" },
+      labels: { project: "migration" },
+      useBefore: "2099-01-01T00:00:00.000Z",
+      claim: { id: "claim_v1", holder: "handler" },
+    });
+    expect(migrated.latestEventCursor()).toBe(1);
+    expect(
+      migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
+    ).toBe(2);
+    expect(migrated.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(migrated.releaseClaim("attn_v1", "claim_v1", "handler").claim).toBeNull();
   });
 });
 

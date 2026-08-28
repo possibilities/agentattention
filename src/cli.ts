@@ -1,24 +1,25 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import {
-  type AppConfig,
+  type ClientCommandContext,
+  ClientUsageError,
+  runClientCommand,
+} from "./client-commands.ts";
+import {
   addCredential,
   createInitialConfig,
+  defaultClientConfigPath,
   defaultConfigPath,
   loadConfig,
+  saveClientConfig,
   saveConfig,
 } from "./config.ts";
 import { startDaemon } from "./daemon.ts";
 import { conflict, notFound, ServiceError } from "./errors.ts";
 
-const SERVICE_LABEL = "com.arthack.agentattention";
-
-interface CliContext {
-  json: boolean;
-  configPath: string;
+interface CliContext extends ClientCommandContext {
   args: string[];
 }
 
@@ -35,10 +36,11 @@ async function main(): Promise<void> {
       return;
     }
     if (command === "init") {
-      initialize(context);
+      initialize(context, args);
       return;
     }
     if (command === "serve") {
+      if (args.length > 0) throw new UsageError("serve takes no arguments");
       await serve(context);
       return;
     }
@@ -46,13 +48,10 @@ async function main(): Promise<void> {
       credential(context, args);
       return;
     }
-    if (command === "daemon") {
-      daemon(context, args);
-      return;
-    }
+    if (await runClientCommand(command, args, context)) return;
     throw new UsageError(`Unknown command: ${command}`);
   } catch (error) {
-    if (error instanceof UsageError) {
+    if (error instanceof UsageError || error instanceof ClientUsageError) {
       console.error(`${error.message}\n\n${usage()}`);
       process.exitCode = 2;
       return;
@@ -80,23 +79,33 @@ async function main(): Promise<void> {
   }
 }
 
-function initialize(context: CliContext): void {
-  if (existsSync(context.configPath)) {
-    throw conflict("config_exists", `Configuration already exists at ${context.configPath}`);
+function initialize(context: CliContext, args: string[]): void {
+  if (args.length > 0) throw new UsageError("init takes no arguments");
+  if (existsSync(context.serverConfigPath)) {
+    throw conflict("config_exists", `Configuration already exists at ${context.serverConfigPath}`);
   }
-  const { config, token } = createInitialConfig();
-  saveConfig(context.configPath, config);
+  if (existsSync(context.clientConfigPath)) {
+    throw conflict(
+      "client_config_exists",
+      `Client configuration already exists at ${context.clientConfigPath}`,
+    );
+  }
+  const created = createInitialConfig();
+  saveConfig(context.serverConfigPath, created.config);
+  saveClientConfig(context.clientConfigPath, created.client);
   output(context, {
-    configPath: context.configPath,
-    database: config.database,
-    principal: config.credentials[0]?.id,
-    token,
-    warning: "This administrator token is shown once; store it securely.",
+    configPath: context.serverConfigPath,
+    clientConfigPath: context.clientConfigPath,
+    database: created.config.database,
+    administratorPrincipal: created.config.credentials[0]?.id,
+    administratorToken: created.administratorToken,
+    clientPrincipal: created.client.principal,
+    warning: "The administrator token is shown once; the local client token is stored mode 0600.",
   });
 }
 
 async function serve(context: CliContext): Promise<void> {
-  const config = loadConfig(context.configPath);
+  const config = loadConfig(context.serverConfigPath);
   const daemon = startDaemon(config);
   if (context.json) {
     console.log(JSON.stringify({ ok: true, data: { status: "ready", url: daemon.url } }));
@@ -118,8 +127,9 @@ async function serve(context: CliContext): Promise<void> {
 
 function credential(context: CliContext, args: string[]): void {
   const [subcommand, ...rest] = args;
-  const config = loadConfig(context.configPath);
+  const config = loadConfig(context.serverConfigPath);
   if (subcommand === "list") {
+    if (rest.length > 0) throw new UsageError("credential list takes no arguments");
     output(
       context,
       config.credentials.map(({ id, name, scopes }) => ({ id, name, scopes })),
@@ -133,26 +143,28 @@ function credential(context: CliContext, args: string[]): void {
       .map((scope) => scope.trim())
       .filter(Boolean);
     const created = addCredential(config, name, scopes);
-    saveConfig(context.configPath, created.config);
+    saveConfig(context.serverConfigPath, created.config);
     output(context, {
       id: created.credential.id,
       name: created.credential.name,
       scopes: created.credential.scopes,
       token: created.token,
-      warning: "This token is shown once; restart the daemon after credential changes.",
+      warning: "This token is shown once; restart the service after credential changes.",
     });
     return;
   }
   if (subcommand === "revoke") {
     const reference = rest[0];
-    if (!reference || rest.length !== 1)
+    if (!reference || rest.length !== 1) {
       throw new UsageError("credential revoke requires one id or exact name");
+    }
     const matches = config.credentials.filter(
       (entry) => entry.id === reference || entry.name.toLowerCase() === reference.toLowerCase(),
     );
     if (matches.length === 0) throw notFound("Credential not found");
-    if (matches.length > 1)
+    if (matches.length > 1) {
       throw conflict("ambiguous_credential", "Credential name is ambiguous; use its id");
+    }
     const target = matches[0];
     if (!target) throw notFound("Credential not found");
     const remaining = config.credentials.filter((entry) => entry.id !== target.id);
@@ -162,124 +174,17 @@ function credential(context: CliContext, args: string[]): void {
     ) {
       throw conflict("last_admin", "Cannot revoke the last administrator credential");
     }
-    saveConfig(context.configPath, { ...config, credentials: remaining });
+    saveConfig(context.serverConfigPath, { ...config, credentials: remaining });
     output(context, { revoked: { id: target.id, name: target.name }, restartRequired: true });
     return;
   }
   throw new UsageError("credential requires create, list, or revoke");
 }
 
-function daemon(context: CliContext, args: string[]): void {
-  const [subcommand] = args;
-  if (!subcommand || args.length !== 1)
-    throw new UsageError("daemon requires install, start, stop, status, or uninstall");
-  const plistPath = launchAgentPath();
-  if (subcommand === "install") {
-    const config = loadConfig(context.configPath);
-    installLaunchAgent(context, config, plistPath);
-    return;
-  }
-  if (subcommand === "start") {
-    if (!existsSync(plistPath)) throw notFound(`LaunchAgent is not installed at ${plistPath}`);
-    const alreadyRunning = Bun.spawnSync(
-      ["launchctl", "print", `${launchDomain()}/${SERVICE_LABEL}`],
-      { stdout: "ignore", stderr: "ignore" },
-    );
-    if (alreadyRunning.exitCode === 0) {
-      output(context, { status: "running", label: SERVICE_LABEL });
-      return;
-    }
-    bootstrapLaunchAgent(plistPath);
-    output(context, { status: "started", label: SERVICE_LABEL });
-    return;
-  }
-  if (subcommand === "stop") {
-    const stopped = runLaunchctl(["bootout", `${launchDomain()}/${SERVICE_LABEL}`], true);
-    output(context, { status: stopped ? "stopped" : "not_loaded", label: SERVICE_LABEL });
-    return;
-  }
-  if (subcommand === "status") {
-    const result = Bun.spawnSync(["launchctl", "print", `${launchDomain()}/${SERVICE_LABEL}`], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const loaded = result.exitCode === 0;
-    output(context, {
-      status: loaded ? "running" : "stopped",
-      installed: existsSync(plistPath),
-      label: SERVICE_LABEL,
-    });
-    if (!loaded) process.exitCode = 3;
-    return;
-  }
-  if (subcommand === "uninstall") {
-    runLaunchctl(["bootout", `${launchDomain()}/${SERVICE_LABEL}`], true);
-    if (existsSync(plistPath)) unlinkSync(plistPath);
-    output(context, { status: "uninstalled", label: SERVICE_LABEL, removed: plistPath });
-    return;
-  }
-  throw new UsageError(`Unknown daemon command: ${subcommand}`);
-}
-
-function installLaunchAgent(context: CliContext, config: AppConfig, plistPath: string): void {
-  const stateDirectory = dirname(config.database);
-  mkdirSync(dirname(plistPath), { recursive: true });
-  mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
-  const cliPath = resolve(process.argv[1] ?? "src/cli.ts");
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>${SERVICE_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${xml(stableBunPath())}</string>
-    <string>${xml(cliPath)}</string>
-    <string>serve</string>
-    <string>--config</string>
-    <string>${xml(context.configPath)}</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>5</integer>
-  <key>StandardOutPath</key><string>${xml(resolve(stateDirectory, "daemon.log"))}</string>
-  <key>StandardErrorPath</key><string>${xml(resolve(stateDirectory, "daemon.error.log"))}</string>
-</dict>
-</plist>
-`;
-  writeFileSync(plistPath, plist, { mode: 0o644 });
-  runLaunchctl(["bootout", `${launchDomain()}/${SERVICE_LABEL}`], true);
-  bootstrapLaunchAgent(plistPath);
-  output(context, { status: "installed", label: SERVICE_LABEL, plist: plistPath });
-}
-
-function bootstrapLaunchAgent(plistPath: string): void {
-  let detail = "";
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const result = Bun.spawnSync(["launchctl", "bootstrap", launchDomain(), plistPath], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (result.exitCode === 0) return;
-    detail = new TextDecoder().decode(result.stderr).trim();
-    if (!detail.includes("Bootstrap failed: 5")) break;
-    Bun.sleepSync(100);
-  }
-  throw new ServiceError("launchctl_failed", 500, detail || "launchctl bootstrap failed");
-}
-
-function runLaunchctl(args: string[], allowFailure: boolean): boolean {
-  const result = Bun.spawnSync(["launchctl", ...args], { stdout: "pipe", stderr: "pipe" });
-  if (result.exitCode !== 0 && !allowFailure) {
-    const detail = new TextDecoder().decode(result.stderr).trim();
-    throw new ServiceError("launchctl_failed", 500, detail || `launchctl ${args[0]} failed`);
-  }
-  return result.exitCode === 0;
-}
-
 function parseGlobal(args: string[]): CliContext {
   let json = false;
-  let configPath = defaultConfigPath();
+  let serverConfigPath = defaultConfigPath();
+  let clientConfigPath = defaultClientConfigPath();
   const remaining: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -287,20 +192,25 @@ function parseGlobal(args: string[]): CliContext {
       json = true;
       continue;
     }
-    if (argument === "--config") {
+    if (argument === "--config" || argument === "--client-config") {
       const value = args[index + 1];
-      if (!value) throw new UsageError("--config requires a path");
-      configPath = resolve(value);
+      if (!value) throw new UsageError(`${argument} requires a path`);
+      if (argument === "--config") serverConfigPath = resolve(value);
+      else clientConfigPath = resolve(value);
       index += 1;
       continue;
     }
     if (argument?.startsWith("--config=")) {
-      configPath = resolve(argument.slice("--config=".length));
+      serverConfigPath = resolve(argument.slice("--config=".length));
+      continue;
+    }
+    if (argument?.startsWith("--client-config=")) {
+      clientConfigPath = resolve(argument.slice("--client-config=".length));
       continue;
     }
     remaining.push(argument ?? "");
   }
-  return { json, configPath, args: remaining };
+  return { json, serverConfigPath, clientConfigPath, args: remaining };
 }
 
 function option(args: string[], name: string): string {
@@ -315,43 +225,45 @@ function output(context: CliContext, data: unknown): void {
   else console.log(typeof data === "string" ? data : JSON.stringify(data, null, 2));
 }
 
-function launchAgentPath(): string {
-  return resolve(homedir(), "Library/LaunchAgents", `${SERVICE_LABEL}.plist`);
-}
-
-function stableBunPath(): string {
-  const candidates = [
-    "/opt/homebrew/bin/bun",
-    "/usr/local/bin/bun",
-    resolve(homedir(), ".bun/bin/bun"),
-    process.execPath,
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? process.execPath;
-}
-
-function launchDomain(): string {
-  return `gui/${process.getuid?.() ?? 0}`;
-}
-
-function xml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
 function usage(): string {
   return `agentattention — durable human-attention control plane
 
 Usage:
-  agentattention [--config PATH] [--json] init
-  agentattention [--config PATH] [--json] serve
-  agentattention [--config PATH] [--json] credential create --name NAME --scopes SCOPE,...
-  agentattention [--config PATH] [--json] credential list
-  agentattention [--config PATH] [--json] credential revoke ID_OR_NAME
-  agentattention [--config PATH] [--json] daemon install|start|stop|status|uninstall
+  agentattention [GLOBAL] init
+  agentattention [GLOBAL] serve
+  agentattention [GLOBAL] credential create --name NAME --scopes SCOPE,...
+  agentattention [GLOBAL] credential list
+  agentattention [GLOBAL] credential revoke ID_OR_NAME
 
-The default config is ${defaultConfigPath()}.
-Run init once; it prints the only copy of the initial administrator token.`;
+  agentattention [GLOBAL] create question --title TITLE --question PROMPT [--question PROMPT ...]
+  agentattention [GLOBAL] create approval --title TITLE --document FILE [--format markdown|plain]
+  agentattention [GLOBAL] create browser --title TITLE --target NAME --action TEXT
+  agentattention [GLOBAL] create --file ITEM.json
+  agentattention [GLOBAL] list [FILTERS]
+  agentattention [GLOBAL] show ID
+  agentattention [GLOBAL] status [FILTERS]
+  agentattention [GLOBAL] wait ID... [--all] [--timeout DURATION]
+  agentattention [GLOBAL] wait --correlation ID [--all] [--timeout DURATION]
+  agentattention [GLOBAL] events [--after CURSOR] [--follow]
+  agentattention [GLOBAL] claim ID [--lease SECONDS]
+  agentattention [GLOBAL] release ID --claim CLAIM_ID
+  agentattention [GLOBAL] resolve ID --file RESOLUTION.json [--claim CLAIM_ID]
+  agentattention [GLOBAL] return ID --reason REASON [--comment TEXT] [--claim CLAIM_ID]
+  agentattention [GLOBAL] cancel ID --reason REASON
+  agentattention [GLOBAL] prune FILTERS [--apply --reason REASON]
+  agentattention [GLOBAL] tui
+  agentattention [GLOBAL] process ID
+
+Global options:
+  --config PATH          server configuration (default ${defaultConfigPath()})
+  --client-config PATH   client credential (default ${defaultClientConfigPath()})
+  --json                 structured command output
+
+Create metadata:
+  --context TEXT | --context-file FILE
+  --priority N  --label KEY=VALUE  --correlation ID  --parent ID  --use-before RFC3339
+
+Filters:
+  --status STATUS  --contract CONTRACT  --correlation ID  --label KEY=VALUE
+  --claimed any|claimed|unclaimed|mine  --limit N`;
 }

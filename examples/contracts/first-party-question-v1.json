@@ -1,0 +1,22 @@
+{
+  "contract": "dev.agentattention/question/v1",
+  "payload": {
+    "questions": [
+      { "id": "account", "prompt": "Which account should this workflow use?" },
+      {
+        "id": "continue",
+        "prompt": "Continue after sign-in?",
+        "choices": [
+          { "value": "yes", "label": "Yes, continue" },
+          { "value": "no", "label": "No, stop here" }
+        ]
+      }
+    ]
+  },
+  "resolution": {
+    "answers": [
+      { "questionId": "account", "answer": "person@example.com" },
+      { "questionId": "continue", "answer": "yes" }
+    ]
+  }
+}
