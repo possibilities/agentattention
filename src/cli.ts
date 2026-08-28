@@ -22,6 +22,8 @@ interface CliContext {
   args: string[];
 }
 
+class UsageError extends Error {}
+
 await main();
 
 async function main(): Promise<void> {
@@ -187,7 +189,7 @@ function daemon(context: CliContext, args: string[]): void {
       output(context, { status: "running", label: SERVICE_LABEL });
       return;
     }
-    runLaunchctl(["bootstrap", launchDomain(), plistPath], false);
+    bootstrapLaunchAgent(plistPath);
     output(context, { status: "started", label: SERVICE_LABEL });
     return;
   }
@@ -231,7 +233,7 @@ function installLaunchAgent(context: CliContext, config: AppConfig, plistPath: s
   <key>Label</key><string>${SERVICE_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${xml(process.execPath)}</string>
+    <string>${xml(stableBunPath())}</string>
     <string>${xml(cliPath)}</string>
     <string>serve</string>
     <string>--config</string>
@@ -247,8 +249,23 @@ function installLaunchAgent(context: CliContext, config: AppConfig, plistPath: s
 `;
   writeFileSync(plistPath, plist, { mode: 0o644 });
   runLaunchctl(["bootout", `${launchDomain()}/${SERVICE_LABEL}`], true);
-  runLaunchctl(["bootstrap", launchDomain(), plistPath], false);
+  bootstrapLaunchAgent(plistPath);
   output(context, { status: "installed", label: SERVICE_LABEL, plist: plistPath });
+}
+
+function bootstrapLaunchAgent(plistPath: string): void {
+  let detail = "";
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const result = Bun.spawnSync(["launchctl", "bootstrap", launchDomain(), plistPath], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode === 0) return;
+    detail = new TextDecoder().decode(result.stderr).trim();
+    if (!detail.includes("Bootstrap failed: 5")) break;
+    Bun.sleepSync(100);
+  }
+  throw new ServiceError("launchctl_failed", 500, detail || "launchctl bootstrap failed");
 }
 
 function runLaunchctl(args: string[], allowFailure: boolean): boolean {
@@ -302,6 +319,16 @@ function launchAgentPath(): string {
   return resolve(homedir(), "Library/LaunchAgents", `${SERVICE_LABEL}.plist`);
 }
 
+function stableBunPath(): string {
+  const candidates = [
+    "/opt/homebrew/bin/bun",
+    "/usr/local/bin/bun",
+    resolve(homedir(), ".bun/bin/bun"),
+    process.execPath,
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? process.execPath;
+}
+
 function launchDomain(): string {
   return `gui/${process.getuid?.() ?? 0}`;
 }
@@ -328,5 +355,3 @@ Usage:
 The default config is ${defaultConfigPath()}.
 Run init once; it prints the only copy of the initial administrator token.`;
 }
-
-class UsageError extends Error {}
