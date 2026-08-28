@@ -13,8 +13,9 @@ agentattention create question --title "Choose an account" \
 
 agentattention create approval --title "Approve this plan" --document ./plan.md
 
+browser_target="$(agentbrowse resolve jobsearch --json | jq -er '.data.target.name')"
 agentattention create browser --title "Complete Workday sign-in" \
-  --target jobsearch --action "Sign in and leave the application form open."
+  --target "$browser_target" --action "Sign in and leave the application form open."
 ```
 
 The helpers validate these exact first-party contracts before sending them:
@@ -28,7 +29,9 @@ with `--payload-file`. A single question can have repeatable
 `--choice value=Human label` options. Document input and long context can come
 from a file. The browser payload contains only an Agentbrowse Browser target
 name and requested action—never cookies, CDP URLs, Live View credentials, or a
-reusable secret.
+reusable secret. Resolve a provider-managed agent-browser session with
+`agentbrowse resolve SESSION --json`; a stable session or Browser profile name
+is not the exact target incarnation.
 
 ## Keep the envelope useful to both humans and agents
 

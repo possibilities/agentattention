@@ -83,13 +83,17 @@ The human either approves or requests changes with a required comment.
 
 ### Browser interaction
 
-Use this after automation has prepared one exact Agentbrowse Browser target:
+Use this after automation has prepared a named agent-browser session through
+Agentbrowse. Resolve the stable session to its current exact Browser target
+incarnation before creating the item:
 
 ```bash
+browser_target="$(agentbrowse resolve jobsearch --json | jq -er '.data.target.name')"
+
 agentattention --json create browser \
   --title "Sign in to Workday" \
   --context "Use the job-search account. Leave the application form open." \
-  --target jobsearch \
+  --target "$browser_target" \
   --action "Complete sign-in, MFA, or any challenge blocking the prepared form." \
   --correlation jobsearch-round-42 \
   --label project=jobsearch \
@@ -98,8 +102,9 @@ agentattention --json create browser \
 
 Sign-in is an ordinary browser-interaction item; it does not require a profile
 to be captured in a separate preliminary workflow. The human processor opens
-the named target through Agentbrowse's shared live surface. It will not pick a
-different target or reconstruct missing navigation.
+the exact target through Agentbrowse's shared live surface. It will not resolve
+the stable session again, pick a different target, or reconstruct missing
+navigation.
 
 Use `--use-before RFC3339` only when the prepared state has a real mechanical
 validity window. The service compares the clock and does no harder staleness

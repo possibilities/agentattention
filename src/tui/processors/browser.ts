@@ -16,6 +16,18 @@ import { SIGNAL_GLYPHS, SIGNAL_ROOM } from "../theme.ts";
 import type { ProcessorDecision } from "./types.ts";
 
 type BrowserProcessorMode = "context" | "browser";
+type PaletteCore = Parameters<typeof createCommandPalette>[0];
+type PaletteRenderer = Parameters<typeof createCommandPalette>[1];
+
+interface BrowserKeyEvent {
+  name: string;
+  ctrl: boolean;
+  meta?: boolean;
+  sequence?: string;
+  eventType?: string;
+  preventDefault(): void;
+  stopPropagation(): void;
+}
 
 const BROWSER_TEARDOWN_TIMEOUT_MS = 2_000;
 
@@ -122,18 +134,26 @@ export async function runBrowserProcessor(
   let closed = false;
   let discoveryController: AbortController | null = null;
 
-  const palette = createCommandPalette(core, renderer, "browser-processor-palette", {
-    onOpenChange: (open) => {
-      if (mode !== "browser") return;
-      if (open) {
-        liveView.releaseHeldInput();
-        liveView.blur();
-      } else if (surfaceState.phase === "connected") {
-        liveView.requestControl();
-        liveView.focus();
-      }
+  // A source-linked Agentbrowse can give TypeScript a second declaration of
+  // OpenTUI's private brands. loadOpenTuiCore() guarantees one runtime identity;
+  // the palette consumes only that runtime's public renderable surface.
+  const palette = createCommandPalette(
+    core as unknown as PaletteCore,
+    renderer as unknown as PaletteRenderer,
+    "browser-processor-palette",
+    {
+      onOpenChange: (open) => {
+        if (mode !== "browser") return;
+        if (open) {
+          liveView.releaseHeldInput();
+          liveView.blur();
+        } else if (surfaceState.phase === "connected") {
+          liveView.requestControl();
+          liveView.focus();
+        }
+      },
     },
-  });
+  );
   renderer.root.add(palette.root);
   try {
     contextScroll.verticalScrollBar.visible = false;
@@ -413,7 +433,7 @@ export async function runBrowserProcessor(
     renderer.requestRender();
   }
 
-  const keypress = (key: import("@opentui/core").KeyEvent): void => {
+  const keypress = (key: BrowserKeyEvent): void => {
     if (palette.handleKey(key)) {
       ownKey(key);
       return;

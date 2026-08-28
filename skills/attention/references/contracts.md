@@ -77,14 +77,16 @@ Payload:
 
 ```json
 {
-  "targetName": "jobsearch",
+  "targetName": "jobsearch-0123456789abcdef",
   "requestedAction": "Sign in and leave the prepared form open."
 }
 ```
 
 `targetName` is an exact Agentbrowse Browser target name matching
 `^[a-z][a-z0-9-]{0,31}$`. The bounded payload carries no connection descriptor
-or secret. Successful resolution is:
+or secret. For a provider-managed browser, obtain it from
+`agentbrowse resolve SESSION --json`; the stable agent-browser session and
+Browser profile names are not target names. Successful resolution is:
 
 ```json
 { "outcome": "completed" }

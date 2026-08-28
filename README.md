@@ -59,10 +59,12 @@ agentattention create approval \
   --title "Approve the application plan" \
   --document ./plan.md
 
+browser_target="$(agentbrowse resolve jobsearch --json | jq -er '.data.target.name')"
+
 agentattention create browser \
   --title "Sign in to LinkedIn" \
   --context "Use the job-search account; do not change account settings." \
-  --target jobsearch \
+  --target "$browser_target" \
   --action "Complete sign-in and leave the jobs page ready for automation."
 ```
 
@@ -70,7 +72,8 @@ Run `agentattention tui` to browse open items. Selecting an item suspends the
 queue renderer and foregrounds its standalone processor, just as a terminal
 tool foregrounds `$EDITOR`. The browser processor opens the exact named target
 through Agentbrowse's OpenTUI surface; it never exposes browser credentials in
-the attention item and never offers a target picker.
+the attention item, resolves a stable session to a replacement, or offers a
+target picker.
 
 Every TUI action is available from `ctrl+k`. A human can resolve an item, return
 it as stale, or go back without resolving it. No sound or desktop notification
