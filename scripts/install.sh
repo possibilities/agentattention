@@ -217,7 +217,7 @@ bootstrap_configuration() {
   validate_path "$CLIENT_CONFIG" "client configuration"
   if [[ -e "$SERVER_CONFIG" || -L "$SERVER_CONFIG" ]]; then
     if [[ ! -e "$CLIENT_CONFIG" && ! -L "$CLIENT_CONFIG" ]]; then
-      note "server configuration exists; leaving the intentionally absent local client configuration untouched"
+      note "server configuration exists; leaving the absent local client untouched (recover explicitly with: agentattention client init)"
     fi
     return 0
   fi

@@ -34,6 +34,19 @@ local client credential, and a separate administrator credential. It refuses
 to overwrite either config and prints the administrator token once. The local
 client token is retained only in its mode-0600 client file.
 
+When a pre-bootstrap server config has no local client file, or that file was
+lost, provision it without putting a bearer token on stdout:
+
+```bash
+agentattention client init
+```
+
+The command creates the standard broad `local client` principal when absent.
+If that exact principal already exists with the standard scopes, it rotates the
+credential while preserving the principal id. An existing client file,
+duplicate matching principals, or nonstandard scopes is refused. Restart the
+AgentStart-owned service afterward so it loads the new token hash.
+
 Credential management reads and updates the server config directly:
 
 ```bash

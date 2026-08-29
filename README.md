@@ -37,6 +37,19 @@ bun run src/cli.ts serve
 hashes; the local client file stores a broad non-admin credential used by the
 CLI and TUI. The administrator token is printed once.
 
+If the server configuration predates that paired bootstrap, or the local client
+file is lost, recover it explicitly and then restart the AgentStart-owned
+service:
+
+```bash
+agentattention client init
+../agentstart/scripts/install-launchagents --install
+```
+
+`client init` creates the standard local-client principal when absent and
+rotates it when its file was lost. It writes the replacement token directly to
+the mode-0600 client file and never prints it.
+
 ## Create and drain attention
 
 The bounded first-party contracts are:

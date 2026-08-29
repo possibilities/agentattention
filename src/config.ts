@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { badRequest } from "./errors.ts";
+import { badRequest, conflict } from "./errors.ts";
 import { createId, createToken, hashToken } from "./ids.ts";
 
 export const ALL_SCOPES = [
@@ -13,6 +13,8 @@ export const ALL_SCOPES = [
   "items:cancel",
   "events:read",
 ] as const;
+
+export const LOCAL_CLIENT_NAME = "local client";
 
 export interface CredentialConfig {
   id: string;
@@ -65,32 +67,87 @@ export function createInitialConfig(): {
   client: ClientConfig;
 } {
   const administratorToken = createToken();
-  const clientToken = createToken();
   const administrator = {
     id: createId("cred"),
     name: "administrator",
     tokenHash: hashToken(administratorToken),
     scopes: ["admin"],
   };
-  const localClient = {
-    id: createId("cred"),
-    name: "local client",
-    tokenHash: hashToken(clientToken),
-    scopes: [...ALL_SCOPES],
-  };
+  const local = createOrRotateLocalClient({
+    server: { host: "127.0.0.1", port: 7331, maxBodyBytes: 1_048_576 },
+    database: defaultDatabasePath(),
+    credentials: [administrator],
+  });
   return {
     administratorToken,
-    config: {
-      server: { host: "127.0.0.1", port: 7331, maxBodyBytes: 1_048_576 },
-      database: defaultDatabasePath(),
-      credentials: [administrator, localClient],
-    },
-    client: {
-      version: 1,
-      url: "http://127.0.0.1:7331",
-      token: clientToken,
-      principal: { id: localClient.id, name: localClient.name },
-    },
+    config: local.config,
+    client: local.client,
+  };
+}
+
+export function createOrRotateLocalClient(config: AppConfig): {
+  config: AppConfig;
+  client: ClientConfig;
+  action: "created" | "rotated";
+} {
+  const matches = config.credentials.filter(
+    (credential) => credential.name.toLowerCase() === LOCAL_CLIENT_NAME,
+  );
+  if (matches.length > 1) {
+    throw conflict(
+      "ambiguous_local_client",
+      `Several credentials are named ${JSON.stringify(LOCAL_CLIENT_NAME)}; revoke duplicates by id`,
+    );
+  }
+
+  const existing = matches[0];
+  const expectedScopes = new Set<string>(ALL_SCOPES);
+  if (
+    existing &&
+    (existing.scopes.length !== expectedScopes.size ||
+      existing.scopes.some((scope) => !expectedScopes.has(scope)))
+  ) {
+    throw conflict(
+      "local_client_scope_mismatch",
+      `The existing ${JSON.stringify(LOCAL_CLIENT_NAME)} credential does not have the standard scopes`,
+    );
+  }
+
+  if (!existing) {
+    const created = addCredential(config, LOCAL_CLIENT_NAME, [...ALL_SCOPES]);
+    return {
+      config: created.config,
+      client: localClientConfig(created.config, created.credential, created.token),
+      action: "created",
+    };
+  }
+
+  const token = createToken();
+  const credential = { ...existing, tokenHash: hashToken(token) };
+  const updated = {
+    ...config,
+    credentials: config.credentials.map((entry) =>
+      entry.id === credential.id ? credential : entry,
+    ),
+  };
+  return {
+    config: updated,
+    client: localClientConfig(updated, credential, token),
+    action: "rotated",
+  };
+}
+
+function localClientConfig(
+  config: AppConfig,
+  credential: CredentialConfig,
+  token: string,
+): ClientConfig {
+  const host = config.server.host === "::1" ? "[::1]" : config.server.host;
+  return {
+    version: 1,
+    url: `http://${host}:${config.server.port}`,
+    token,
+    principal: { id: credential.id, name: credential.name },
   };
 }
 

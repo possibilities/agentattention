@@ -10,6 +10,7 @@ import {
 import {
   addCredential,
   createInitialConfig,
+  createOrRotateLocalClient,
   defaultClientConfigPath,
   defaultConfigPath,
   loadConfig,
@@ -46,6 +47,10 @@ async function main(): Promise<void> {
     }
     if (command === "credential") {
       credential(context, args);
+      return;
+    }
+    if (command === "client") {
+      client(context, args);
       return;
     }
     if (await runClientCommand(command, args, context)) return;
@@ -181,6 +186,29 @@ function credential(context: CliContext, args: string[]): void {
   throw new UsageError("credential requires create, list, or revoke");
 }
 
+function client(context: CliContext, args: string[]): void {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== "init") throw new UsageError("client requires init");
+  if (rest.length > 0) throw new UsageError("client init takes no arguments");
+  if (existsSync(context.clientConfigPath)) {
+    throw conflict(
+      "client_config_exists",
+      `Client configuration already exists at ${context.clientConfigPath}`,
+    );
+  }
+
+  const created = createOrRotateLocalClient(loadConfig(context.serverConfigPath));
+  saveConfig(context.serverConfigPath, created.config);
+  saveClientConfig(context.clientConfigPath, created.client);
+  output(context, {
+    clientConfigPath: context.clientConfigPath,
+    principal: created.client.principal,
+    credential: created.action,
+    restartRequired: true,
+    warning: "The local client token was stored mode 0600 and was not printed.",
+  });
+}
+
 function parseGlobal(args: string[]): CliContext {
   let json = false;
   let serverConfigPath = defaultConfigPath();
@@ -234,6 +262,7 @@ Usage:
   agentattention [GLOBAL] credential create --name NAME --scopes SCOPE,...
   agentattention [GLOBAL] credential list
   agentattention [GLOBAL] credential revoke ID_OR_NAME
+  agentattention [GLOBAL] client init
 
   agentattention [GLOBAL] create question --title TITLE --question PROMPT [--question PROMPT ...]
   agentattention [GLOBAL] create approval --title TITLE --document FILE [--format markdown|plain]

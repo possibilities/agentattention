@@ -7,6 +7,7 @@ import {
   type AppConfig,
   type ClientConfig,
   createInitialConfig,
+  createOrRotateLocalClient,
   loadClientConfig,
   loadConfig,
   saveClientConfig,
@@ -56,6 +57,36 @@ describe("client configuration", () => {
     chmodSync(path, 0o644);
     saveClientConfig(path, created.client);
     expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  test("refuses ambiguous or nonstandard local-client principals", () => {
+    const created = createInitialConfig();
+    const local = created.config.credentials.find((entry) => entry.name === "local client");
+    if (!local) throw new Error("initial config omitted local client");
+
+    try {
+      createOrRotateLocalClient({
+        ...created.config,
+        credentials: [...created.config.credentials, { ...local, id: "cred_duplicate" }],
+      });
+      throw new Error("expected duplicate local clients to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ServiceError);
+      expect((error as ServiceError).code).toBe("ambiguous_local_client");
+    }
+
+    try {
+      createOrRotateLocalClient({
+        ...created.config,
+        credentials: created.config.credentials.map((entry) =>
+          entry.id === local.id ? { ...entry, scopes: ["items:read"] } : entry,
+        ),
+      });
+      throw new Error("expected nonstandard local-client scopes to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ServiceError);
+      expect((error as ServiceError).code).toBe("local_client_scope_mismatch");
+    }
   });
 });
 

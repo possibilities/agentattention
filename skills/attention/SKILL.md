@@ -28,6 +28,20 @@ monitors, sounds, or desktop notifications.
 - Do not claim producer-created items. Claims belong to the human processor and
   are managed automatically by the first-party TUI.
 
+If the CLI reports `client_config_unreadable`, ordinary handoff work stops and
+reports the local installation fault. When the user has authorized toolchain
+repair, recover without exposing a bearer token, then restart the managed
+service:
+
+```bash
+agentattention --json client init
+"$HOME/code/agentstart/scripts/install-launchagents" --install
+```
+
+`client init` refuses an existing client file and writes its new or rotated
+credential directly at mode 0600. Never reconstruct client JSON from printed
+credential output or from the server's token hashes.
+
 ## One work round
 
 1. Do all autonomous work that can be done now.

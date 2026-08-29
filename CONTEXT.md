@@ -28,6 +28,10 @@
 - **Principal**: The identity attached to a bearer credential and recorded on
   mutations. _Avoid_: user (a principal may be an agent or tool), token (the
   secret authenticates the principal but is not its identity).
+- **Local client credential**: The broad non-admin credential stored in the
+  mode-0600 client file for this machine's CLI and TUI. `client init` creates or
+  rotates it without printing the bearer token. _Avoid_: administrator token,
+  server credential (the server configuration stores its hash and principal).
 - **Event cursor**: The monotonically increasing sequence number of a durable
   event. Consumers persist it to resume an at-least-once event feed. _Avoid_:
   offset (events are not positionally paginated), timestamp cursor (timestamps
