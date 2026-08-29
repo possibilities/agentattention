@@ -3,7 +3,7 @@ import * as core from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { AttentionItem } from "../src/domain.ts";
 import { createCommandPalette, type PaletteCommand, paletteMatches } from "../src/tui/palette.ts";
-import { resolveProcessorImageProtocol } from "../src/tui/queue.ts";
+import { createQueueEmptyState, resolveProcessorImageProtocol } from "../src/tui/queue.ts";
 import { queueItemView } from "../src/tui/queue-model.ts";
 
 const commands: PaletteCommand[] = [
@@ -54,6 +54,32 @@ describe("queue presentation", () => {
       "down",
     ]);
     expect(paletteMatches(commands, "enter").map((command) => command.id)).toEqual(["process"]);
+  });
+
+  test("centers a stable no-items state without refresh narration", async () => {
+    for (const frame of [
+      { width: 40, height: 7 },
+      { width: 80, height: 24 },
+      { width: 120, height: 30 },
+    ]) {
+      const setup = await createTestRenderer(frame);
+      setup.renderer.root.add(createQueueEmptyState(core, setup.renderer));
+      const emptyState = setup.renderer.root.findDescendantById("attention-queue-empty");
+      expect(emptyState).toBeInstanceOf(core.BoxRenderable);
+      if (emptyState) emptyState.visible = true;
+      await setup.flush();
+
+      const rendered = setup.captureCharFrame();
+      const lines = rendered.split("\n");
+      const row = lines.findIndex((line) => line.includes("NO ITEMS"));
+      const column = row >= 0 ? (lines[row]?.indexOf("NO ITEMS") ?? -1) : -1;
+      expect(row).toBeGreaterThanOrEqual(Math.floor(frame.height / 2) - 1);
+      expect(row).toBeLessThanOrEqual(Math.ceil(frame.height / 2));
+      expect(column).toBeGreaterThanOrEqual(Math.floor((frame.width - 8) / 2) - 1);
+      expect(column).toBeLessThanOrEqual(Math.ceil((frame.width - 8) / 2));
+      expect(rendered).not.toContain("REFRESHING");
+      setup.renderer.destroy();
+    }
   });
 });
 

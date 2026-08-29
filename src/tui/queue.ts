@@ -8,6 +8,9 @@ import { createCommandPalette } from "./palette.ts";
 import { queueItemView } from "./queue-model.ts";
 import { SIGNAL_GLYPHS, SIGNAL_ROOM } from "./theme.ts";
 
+type OpenTui = typeof import("@opentui/core");
+type QueueRenderer = Awaited<ReturnType<OpenTui["createCliRenderer"]>>;
+
 export interface QueueTuiOptions {
   clientConfigPath: string;
   serverConfigPath: string;
@@ -30,6 +33,34 @@ export function resolveProcessorImageProtocol(
   if (capabilities.kitty_graphics) return "kitty";
   if (capabilities.sixel) return "sixel";
   return "blocks";
+}
+
+export function createQueueEmptyState(
+  core: OpenTui,
+  renderer: QueueRenderer,
+): InstanceType<OpenTui["BoxRenderable"]> {
+  const emptyState = new core.BoxRenderable(renderer, {
+    id: "attention-queue-empty",
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: SIGNAL_ROOM.canvas,
+    visible: false,
+    zIndex: 10,
+  });
+  emptyState.add(
+    new core.TextRenderable(renderer, {
+      content: "NO ITEMS",
+      fg: SIGNAL_ROOM.muted,
+      height: 1,
+      wrapMode: "none",
+    }),
+  );
+  return emptyState;
 }
 
 export async function runQueueTui(
@@ -80,6 +111,8 @@ export async function runQueueTui(
   });
   scroll.add(body);
   root.add(scroll);
+  const emptyState = createQueueEmptyState(core, renderer);
+  root.add(emptyState);
   renderer.root.add(root);
 
   const palette = createCommandPalette(core, renderer, "attention-queue-palette");
@@ -93,7 +126,6 @@ export async function runQueueTui(
 
   let items: AttentionItem[] = [];
   let selected = 0;
-  let loading = true;
   let processing = false;
   let error: string | null = null;
   let closed = false;
@@ -152,8 +184,6 @@ export async function runQueueTui(
 
   const refresh = async (): Promise<void> => {
     const generation = ++refreshGeneration;
-    loading = true;
-    paint();
     try {
       const next: AttentionItem[] = [];
       let cursor: string | undefined;
@@ -181,7 +211,6 @@ export async function runQueueTui(
       error = caught instanceof Error ? caught.message : String(caught);
     } finally {
       if (generation === refreshGeneration && !closed) {
-        loading = false;
         paint();
       }
     }
@@ -224,6 +253,7 @@ export async function runQueueTui(
       body.remove(child);
       child.destroyRecursively();
     }
+    emptyState.visible = error === null && items.length === 0;
     if (error) {
       body.add(
         new core.TextRenderable(renderer, {
@@ -236,27 +266,9 @@ export async function runQueueTui(
       return;
     }
     if (items.length === 0) {
-      body.add(
-        new core.TextRenderable(renderer, {
-          content: loading
-            ? `${SIGNAL_GLYPHS.idle} REFRESHING`
-            : `${SIGNAL_GLYPHS.idle} EMPTY\n\nwaiting for attention items`,
-          fg: loading ? SIGNAL_ROOM.accent : SIGNAL_ROOM.muted,
-        }),
-      );
       renderer.requestRender();
       return;
     }
-    body.add(
-      new core.TextRenderable(renderer, {
-        id: "attention-queue-signal",
-        content: `${SIGNAL_GLYPHS.rail} OPEN · ${items.length}${processing ? " · PROCESSOR ACTIVE" : ""}`,
-        fg: processing ? SIGNAL_ROOM.local : SIGNAL_ROOM.accent,
-        height: 1,
-        wrapMode: "none",
-      }),
-    );
-    body.add(new core.TextRenderable(renderer, { content: "", height: 1 }));
     items.forEach((item, index) => {
       const view = queueItemView(item, Math.max(20, columns - 4));
       const active = index === selected;
