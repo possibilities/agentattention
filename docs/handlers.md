@@ -15,7 +15,9 @@ agentattention tui
 The queue lists open items in service order and marks unsupported external
 contracts. Selecting a supported item suspends the queue renderer, launches
 `agentattention process ID` with inherited terminal I/O, then resumes and
-refreshes the queue when that child exits. Each standalone processor can also
+refreshes the queue when that child exits. The child also inherits the queue's
+effective OpenTUI image protocol; an explicit `OPENTUI_IMAGE_PROTOCOL`
+environment override remains authoritative. Each standalone processor can also
 be run directly.
 
 The question processor supports one or several required free-text or

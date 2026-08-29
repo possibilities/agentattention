@@ -3,6 +3,7 @@ import * as core from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { AttentionItem } from "../src/domain.ts";
 import { createCommandPalette, type PaletteCommand, paletteMatches } from "../src/tui/palette.ts";
+import { resolveProcessorImageProtocol } from "../src/tui/queue.ts";
 import { queueItemView } from "../src/tui/queue-model.ts";
 
 const commands: PaletteCommand[] = [
@@ -53,6 +54,50 @@ describe("queue presentation", () => {
       "down",
     ]);
     expect(paletteMatches(commands, "enter").map((command) => command.id)).toEqual(["process"]);
+  });
+});
+
+describe("foreground processor image protocol", () => {
+  test("inherits the queue renderer's negotiated Kitty protocol", () => {
+    expect(
+      resolveProcessorImageProtocol(undefined, {
+        image_protocol: "auto",
+        kitty_graphics: true,
+        multiplexer: "none",
+        sixel: false,
+      }),
+    ).toBe("kitty");
+  });
+
+  test("inherits Sixel support and falls back to blocks", () => {
+    expect(
+      resolveProcessorImageProtocol(undefined, {
+        image_protocol: "auto",
+        kitty_graphics: false,
+        multiplexer: "none",
+        sixel: true,
+      }),
+    ).toBe("sixel");
+    expect(
+      resolveProcessorImageProtocol(undefined, {
+        image_protocol: "auto",
+        kitty_graphics: true,
+        multiplexer: "tmux",
+        sixel: true,
+      }),
+    ).toBe("blocks");
+    expect(resolveProcessorImageProtocol(undefined, null)).toBe("blocks");
+  });
+
+  test("preserves an explicit environment override", () => {
+    expect(
+      resolveProcessorImageProtocol("blocks", {
+        image_protocol: "auto",
+        kitty_graphics: true,
+        multiplexer: "none",
+        sixel: false,
+      }),
+    ).toBe("blocks");
   });
 });
 
