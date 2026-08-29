@@ -9,8 +9,11 @@ and a queue TUI that foregrounds them one at a time.
 Run:
 
 ```bash
-agentattention tui
+agentattention
 ```
+
+The bare command opens the queue TUI; `agentattention tui` is the explicit
+equivalent.
 
 The queue lists open items in service order and marks unsupported external
 contracts. It refreshes silently in the background: an empty queue holds

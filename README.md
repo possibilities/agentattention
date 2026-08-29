@@ -81,7 +81,8 @@ agentattention create browser \
   --action "Complete sign-in and leave the jobs page ready for automation."
 ```
 
-Run `agentattention tui` to browse open items. Selecting an item suspends the
+Run `agentattention` to browse open items; `agentattention tui` is the explicit
+equivalent. Selecting an item suspends the
 queue renderer and foregrounds its standalone processor, just as a terminal
 tool foregrounds `$EDITOR`. Background refresh is silent: an empty queue holds
 `NO ITEMS` at the center of the viewport, while a nonempty queue renders its

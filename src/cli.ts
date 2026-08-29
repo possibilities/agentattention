@@ -32,8 +32,12 @@ async function main(): Promise<void> {
   try {
     const context = parseGlobal(process.argv.slice(2));
     const [command, ...args] = context.args;
-    if (!command || command === "help" || command === "--help" || command === "-h") {
+    if (command === "help" || command === "--help" || command === "-h") {
       console.log(usage());
+      return;
+    }
+    if (!command) {
+      await runClientCommand("tui", [], context);
       return;
     }
     if (command === "init") {
@@ -257,6 +261,7 @@ function usage(): string {
   return `agentattention — durable human-attention control plane
 
 Usage:
+  agentattention [GLOBAL]
   agentattention [GLOBAL] init
   agentattention [GLOBAL] serve
   agentattention [GLOBAL] credential create --name NAME --scopes SCOPE,...

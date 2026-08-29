@@ -38,6 +38,18 @@ describe("CLI entrypoint", () => {
     expect(result.stderr).toBe("");
   });
 
+  test("uses the queue TUI as the bare-command default", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentattention-bare-command-"));
+    temporaryRoots.push(directory);
+    const missingClientConfig = join(directory, "missing-client.json");
+    const result = runCli(["--json", "--client-config", missingClientConfig]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout).error.code).toBe("client_config_unreadable");
+    expect(result.stdout).not.toContain("durable human-attention control plane");
+  });
+
   test("creates and recovers the standard local client without printing its token", () => {
     const directory = mkdtempSync(join(tmpdir(), "agentattention-client-init-"));
     temporaryRoots.push(directory);
