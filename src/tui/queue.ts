@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import type { TerminalCapabilities } from "@opentui/core";
 import { AttentionClient } from "../client.ts";
 import type { ClientConfig } from "../config.ts";
 import { isFirstPartyContract } from "../contracts/index.ts";
@@ -14,25 +13,6 @@ type QueueRenderer = Awaited<ReturnType<OpenTui["createCliRenderer"]>>;
 export interface QueueTuiOptions {
   clientConfigPath: string;
   serverConfigPath: string;
-}
-
-type ProcessorImageCapabilities = Pick<
-  TerminalCapabilities,
-  "image_protocol" | "kitty_graphics" | "multiplexer" | "sixel"
->;
-
-export function resolveProcessorImageProtocol(
-  explicitProtocol: string | undefined,
-  capabilities: ProcessorImageCapabilities | null,
-): string {
-  if (explicitProtocol !== undefined) return explicitProtocol;
-
-  const negotiatedProtocol = capabilities?.image_protocol ?? "auto";
-  if (negotiatedProtocol !== "auto") return negotiatedProtocol;
-  if (!capabilities || capabilities.multiplexer === "tmux") return "blocks";
-  if (capabilities.kitty_graphics) return "kitty";
-  if (capabilities.sixel) return "sixel";
-  return "blocks";
 }
 
 export function createQueueEmptyState(
@@ -148,10 +128,6 @@ export async function runQueueTui(
   const processSelected = async (): Promise<void> => {
     const item = selectedItem();
     if (!item || processing || !isFirstPartyContract(item.contract)) return;
-    const imageProtocol = resolveProcessorImageProtocol(
-      process.env.OPENTUI_IMAGE_PROTOCOL,
-      renderer.capabilities,
-    );
     processing = true;
     paint();
     renderer.suspend();
@@ -171,7 +147,7 @@ export async function runQueueTui(
           stdin: "inherit",
           stdout: "inherit",
           stderr: "inherit",
-          env: { ...process.env, OPENTUI_IMAGE_PROTOCOL: imageProtocol },
+          env: process.env,
         },
       );
       await child.exited;

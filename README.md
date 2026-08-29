@@ -85,10 +85,8 @@ Run `agentattention tui` to browse open items. Selecting an item suspends the
 queue renderer and foregrounds its standalone processor, just as a terminal
 tool foregrounds `$EDITOR`. Background refresh is silent: an empty queue holds
 `NO ITEMS` at the center of the viewport, while a nonempty queue renders its
-attention items without a freshness banner. The processor inherits the queue
-renderer's effective OpenTUI image protocol, while an explicit
-`OPENTUI_IMAGE_PROTOCOL` override remains authoritative. The browser processor
-opens the exact named target through Agentbrowse's OpenTUI surface; it never
+attention items without a freshness banner. The browser processor opens the
+exact named target through Agentbrowse's OpenTUI surface; it never
 exposes browser credentials in the attention item, resolves a stable session to
 a replacement, or offers a target picker.
 
