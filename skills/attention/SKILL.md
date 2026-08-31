@@ -140,8 +140,8 @@ The command captures a durable event cursor before its first snapshots, then
 replays and follows from that cursor; no transition can fall between polling
 and subscription. Timeout is a structured result, not proof that an item
 changed. Harnesses may choose their own mechanism for supervising a blocking
-command, but the command and response contract stays the same in Claude,
-Codex, and Pi.
+command, but the command and response contract stays the same in Claude and
+Codex.
 
 ## Consume outcomes
 
