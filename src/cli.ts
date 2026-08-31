@@ -17,10 +17,11 @@ import {
   saveClientConfig,
   saveConfig,
 } from "./config.ts";
+import { contract, declaredArgument } from "./contract.ts";
 import { startDaemon } from "./daemon.ts";
 import { failureEnvelope, successEnvelope } from "./envelope.ts";
 import { conflict, notFound, ServiceError } from "./errors.ts";
-import { contract, renderAgentHelp, renderHelp, renderTeaser } from "./guide.ts";
+import { renderAgentHelp, renderHelp, renderTeaser } from "./guide.ts";
 
 interface CliContext extends ClientCommandContext {
   args: string[];
@@ -156,8 +157,8 @@ function credential(context: CliContext, args: string[]): void {
     return;
   }
   if (subcommand === "create") {
-    const name = option(rest, "--name");
-    const scopes = option(rest, "--scopes")
+    const name = option(rest, declaredArgument("credential create", "--name"));
+    const scopes = option(rest, declaredArgument("credential create", "--scopes"))
       .split(",")
       .map((scope) => scope.trim())
       .filter(Boolean);

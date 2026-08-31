@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
-import { contract, renderAgentHelp, renderHelp, renderTeaser } from "../src/guide.ts";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { commandSpec, contract } from "../src/contract.ts";
+import { renderAgentHelp, renderHelp, renderTeaser } from "../src/guide.ts";
 
 function runCli(args: string[]): { exitCode: number; stdout: string; stderr: string } {
   const result = Bun.spawnSync([resolve(import.meta.dir, "../src/cli.ts"), ...args], {
@@ -73,10 +74,69 @@ describe("agent contract", () => {
     expect([...declared].sort()).toEqual([...dispatched].sort());
   });
 
+  // The parser is built from the contract (commandSpec), so this asserts the
+  // seam rather than a second list: every declared flag is accepted by the
+  // command that declares it, and an undeclared one is refused.
+  test("the argv grammar of every client command derives from the contract", () => {
+    const paths = [
+      "create question",
+      "create approval",
+      "create browser",
+      "list",
+      "status",
+      "wait",
+      "events",
+      "claim",
+      "release",
+      "resolve",
+      "return",
+      "cancel",
+      "prune",
+    ];
+    // A well-formed credential for a port nothing serves: the parse happens
+    // before any request, and no call can reach a live queue.
+    const directory = mkdtempSync(join(tmpdir(), "agentattention-grammar-"));
+    const clientConfig = join(directory, "client.json");
+    writeFileSync(
+      clientConfig,
+      JSON.stringify({
+        version: 1,
+        url: "http://127.0.0.1:1",
+        token: "aat_grammar_probe",
+        principal: { id: "prn_probe", name: "probe" },
+      }),
+    );
+    const offline = ["--client-config", clientConfig];
+    try {
+      for (const path of paths) {
+        const spec = commandSpec(path);
+        for (const flag of [...spec.values, ...spec.repeat]) {
+          const result = runCli([...offline, ...path.split(" "), flag, "value"]);
+          expect(`${path} ${flag}: ${result.stderr}`).not.toContain("Unknown option");
+        }
+        for (const flag of spec.flags) {
+          const result = runCli([...offline, ...path.split(" "), flag]);
+          expect(`${path} ${flag}: ${result.stderr}`).not.toContain("Unknown option");
+        }
+        const refused = runCli([...offline, ...path.split(" "), "--undeclared", "value"]);
+        expect(refused.exitCode).toBe(2);
+        expect(refused.stderr).toContain("Unknown option: --undeclared");
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("the help surfaces render from the contract", () => {
     const top = renderHelp();
     for (const command of contract().commands) expect(top).toContain(command.summary);
-    expect(renderHelp(["create", "question"])).toContain("--payload-file");
+    const question = renderHelp(["create", "question"]);
+    expect(question).toContain("--payload-file");
+    expect(question).toContain("Examples:");
+    expect(question).toContain("at least one of --question, --payload-file");
+    expect(renderHelp(["wait"])).toContain("Blocks:");
+    expect(renderHelp(["help"])).toContain("Also spelled: --help, -h.");
+    expect(renderHelp(["claim"])).toContain("(5 to");
     expect(renderHelp(["nope"])).toContain("Unknown command");
     expect(renderAgentHelp()).toContain("client_config_unreadable");
     expect(renderTeaser()).toContain("agentattention");

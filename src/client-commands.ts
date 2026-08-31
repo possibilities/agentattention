@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { AttentionClient, type ListEventOptions, type ListItemOptions } from "./client.ts";
 import { loadClientConfig } from "./config.ts";
+import { commandSpec } from "./contract.ts";
 import {
   BROWSER_INTERACTION_CONTRACT,
   DOCUMENT_APPROVAL_CONTRACT,
@@ -78,7 +79,7 @@ export async function runClientCommand(
     return true;
   }
   if (command === "tui") {
-    exactPositionals(parseArgs(args, [], []), 0, "tui takes no arguments");
+    exactPositionals(parseArgs(args, "tui"), 0, "tui takes no arguments");
     const { runQueueTui } = await import("./tui/queue.ts");
     await runQueueTui(loadClientConfig(context.clientConfigPath), {
       clientConfigPath: context.clientConfigPath,
@@ -87,7 +88,7 @@ export async function runClientCommand(
     return true;
   }
   if (command === "process") {
-    const parsed = parseArgs(args, [], []);
+    const parsed = parseArgs(args, "process");
     exactPositionals(parsed, 1, "process requires one attention item id");
     const { runAttentionProcessor } = await import("./tui/processor.ts");
     await runAttentionProcessor(
@@ -103,22 +104,7 @@ async function createCommand(context: ClientCommandContext, args: string[]): Pro
   const [kind, ...rest] = args;
   const client = commandClient(context);
   if (kind === "question") {
-    const parsed = parseArgs(
-      rest,
-      [
-        "--title",
-        "--context",
-        "--context-file",
-        "--payload-file",
-        "--priority",
-        "--correlation",
-        "--parent",
-        "--use-before",
-        "--idempotency-key",
-      ],
-      [],
-      ["--question", "--choice", "--label"],
-    );
+    const parsed = parseArgs(rest, "create question");
     exactPositionals(parsed, 0, "create question accepts options only");
     const payloadFile = parsed.value("--payload-file");
     const questionTexts = parsed.values("--question");
@@ -160,23 +146,7 @@ async function createCommand(context: ClientCommandContext, args: string[]): Pro
     return;
   }
   if (kind === "approval") {
-    const parsed = parseArgs(
-      rest,
-      [
-        "--title",
-        "--context",
-        "--context-file",
-        "--document",
-        "--format",
-        "--priority",
-        "--correlation",
-        "--parent",
-        "--use-before",
-        "--idempotency-key",
-      ],
-      [],
-      ["--label"],
-    );
+    const parsed = parseArgs(rest, "create approval");
     exactPositionals(parsed, 0, "create approval accepts options only");
     const documentPath = required(parsed, "--document");
     const format =
@@ -194,23 +164,7 @@ async function createCommand(context: ClientCommandContext, args: string[]): Pro
     return;
   }
   if (kind === "browser") {
-    const parsed = parseArgs(
-      rest,
-      [
-        "--title",
-        "--context",
-        "--context-file",
-        "--target",
-        "--action",
-        "--priority",
-        "--correlation",
-        "--parent",
-        "--use-before",
-        "--idempotency-key",
-      ],
-      [],
-      ["--label"],
-    );
+    const parsed = parseArgs(rest, "create browser");
     exactPositionals(parsed, 0, "create browser accepts options only");
     const payload = parseBrowserInteractionPayload({
       targetName: required(parsed, "--target"),
@@ -257,7 +211,7 @@ async function createEnvelope(
 }
 
 async function listCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = filterArgs(args, ["--cursor"], []);
+  const parsed = parseArgs(args, "list");
   exactPositionals(parsed, 0, "list accepts options only");
   const client = commandClient(context);
   const page = await client.listItems(listOptions(parsed));
@@ -266,13 +220,13 @@ async function listCommand(context: ClientCommandContext, args: string[]): Promi
 }
 
 async function showCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(args, [], []);
+  const parsed = parseArgs(args, "show");
   exactPositionals(parsed, 1, "show requires one attention item id");
   commandOutput(context, await commandClient(context).getItem(parsed.positionals[0] ?? ""));
 }
 
 async function statusCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = filterArgs(args, [], []);
+  const parsed = parseArgs(args, "status");
   exactPositionals(parsed, 0, "status accepts filters only");
   const items = await collectItems(commandClient(context), listOptions(parsed));
   const counts: Record<AttentionStatus, number> = {
@@ -287,7 +241,7 @@ async function statusCommand(context: ClientCommandContext, args: string[]): Pro
 }
 
 async function waitCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(args, ["--timeout", "--correlation"], ["--all"]);
+  const parsed = parseArgs(args, "wait");
   const client = commandClient(context);
   const correlationId = parsed.value("--correlation");
   if (correlationId && parsed.positionals.length > 0) {
@@ -308,11 +262,7 @@ async function waitCommand(context: ClientCommandContext, args: string[]): Promi
 }
 
 async function eventsCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(
-    args,
-    ["--after", "--limit", "--item", "--contract", "--correlation"],
-    ["--follow"],
-  );
+  const parsed = parseArgs(args, "events");
   exactPositionals(parsed, 0, "events accepts options only");
   const client = commandClient(context);
   const itemId = parsed.value("--item");
@@ -345,7 +295,7 @@ async function eventsCommand(context: ClientCommandContext, args: string[]): Pro
 }
 
 async function claimCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(args, ["--lease"], []);
+  const parsed = parseArgs(args, "claim");
   exactPositionals(parsed, 1, "claim requires one attention item id");
   const lease = parsed.value("--lease");
   commandOutput(
@@ -358,7 +308,7 @@ async function claimCommand(context: ClientCommandContext, args: string[]): Prom
 }
 
 async function releaseCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(args, ["--claim"], []);
+  const parsed = parseArgs(args, "release");
   exactPositionals(parsed, 1, "release requires one attention item id");
   commandOutput(
     context,
@@ -370,7 +320,7 @@ async function releaseCommand(context: ClientCommandContext, args: string[]): Pr
 }
 
 async function resolveCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(args, ["--file", "--claim", "--idempotency-key"], []);
+  const parsed = parseArgs(args, "resolve");
   exactPositionals(parsed, 1, "resolve requires one attention item id");
   const resolution = (await readJsonSource(required(parsed, "--file"))) as JsonValue;
   commandOutput(
@@ -385,11 +335,7 @@ async function resolveCommand(context: ClientCommandContext, args: string[]): Pr
 }
 
 async function returnCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(
-    args,
-    ["--reason", "--comment", "--comment-file", "--claim", "--idempotency-key"],
-    [],
-  );
+  const parsed = parseArgs(args, "return");
   exactPositionals(parsed, 1, "return requires one attention item id");
   const comment = await optionalText(parsed, "--comment", "--comment-file");
   commandOutput(
@@ -409,7 +355,7 @@ async function returnCommand(context: ClientCommandContext, args: string[]): Pro
 }
 
 async function cancelCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = parseArgs(args, ["--reason", "--idempotency-key"], []);
+  const parsed = parseArgs(args, "cancel");
   exactPositionals(parsed, 1, "cancel requires one attention item id");
   commandOutput(
     context,
@@ -424,7 +370,7 @@ async function cancelCommand(context: ClientCommandContext, args: string[]): Pro
 }
 
 async function pruneCommand(context: ClientCommandContext, args: string[]): Promise<void> {
-  const parsed = filterArgs(args, ["--reason"], ["--apply"]);
+  const parsed = parseArgs(args, "prune");
   exactPositionals(parsed, 0, "prune accepts filters only");
   if (
     !parsed.value("--contract") &&
@@ -451,15 +397,6 @@ async function pruneCommand(context: ClientCommandContext, args: string[]): Prom
   }
   commandOutput(context, { preview: false, matched: items.length, cancelled, failures });
   if (failures.length > 0) process.exitCode = 1;
-}
-
-function filterArgs(args: string[], extraValues: string[], extraFlags: string[]): ParsedArgs {
-  return parseArgs(
-    args,
-    ["--status", "--contract", "--correlation", "--claimed", "--limit", ...extraValues],
-    extraFlags,
-    ["--label"],
-  );
 }
 
 function listOptions(parsed: ParsedArgs): ListItemOptions {
@@ -527,12 +464,6 @@ function printItems(items: readonly AttentionItem[], nextCursor: string | null):
   if (nextCursor) console.log(`\nMore items are available; continue with --cursor ${nextCursor}`);
 }
 
-interface ParseSpec {
-  values: Set<string>;
-  flags: Set<string>;
-  repeat: Set<string>;
-}
-
 class ParsedArgs {
   readonly positionals: string[] = [];
   readonly options = new Map<string, string[]>();
@@ -551,16 +482,18 @@ class ParsedArgs {
   }
 }
 
-function parseArgs(
-  args: string[],
-  valueOptions: readonly string[],
-  flagOptions: readonly string[],
-  repeatOptions: readonly string[] = [],
-): ParsedArgs {
-  const spec: ParseSpec = {
-    values: new Set(valueOptions),
-    flags: new Set(flagOptions),
-    repeat: new Set(repeatOptions),
+/**
+ * Parse one command's argv against the grammar the contract declares for it.
+ * The accepted options are never listed here: `commandSpec` reads them off the
+ * command's own `arguments`, so a flag cannot be accepted by the parser and be
+ * missing from `guide --json`, or the other way round.
+ */
+function parseArgs(args: string[], path: string): ParsedArgs {
+  const declared = commandSpec(path);
+  const spec = {
+    values: new Set(declared.values),
+    flags: new Set(declared.flags),
+    repeat: new Set(declared.repeat),
   };
   const parsed = new ParsedArgs();
   for (let index = 0; index < args.length; index += 1) {

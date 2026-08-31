@@ -9,7 +9,7 @@ import {
   loadConfig,
   saveConfig,
 } from "../src/config.ts";
-import { contract } from "../src/guide.ts";
+import { contract } from "../src/contract.ts";
 import { hashToken } from "../src/ids.ts";
 
 const temporaryRoots: string[] = [];
