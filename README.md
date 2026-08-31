@@ -138,8 +138,9 @@ idempotency record, and event commit in one SQLite transaction.
 
 The CLI also provides generic creation, filtering, inspection, event replay,
 claim/resolve/return/cancel operations, and guarded bulk pruning. Run
-`agentattention --help` for the complete surface. `--json` returns stable
-agent-friendly envelopes.
+`agentattention --help` for the complete surface. `--json` returns the stable
+`{schema_version, ok, error, data}` envelope, and `agentattention guide --json`
+publishes the fleet agent contract every other help surface renders from.
 
 Task-oriented references:
 

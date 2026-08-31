@@ -56,7 +56,7 @@ Shared envelope fields are:
 
 The daemon stores `contract` and JSON without interpreting them. Generic clients
 may still create an externally negotiated contract with
-`agentattention create --file ITEM.json`; retain a version in the identifier
+`agentattention create file ITEM.json`; retain a version in the identifier
 and validate both sides outside the daemon.
 
 ## Create once

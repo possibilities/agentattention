@@ -11,6 +11,7 @@ import {
   QUESTION_CONTRACT,
 } from "./contracts/index.ts";
 import type { AttentionItem, AttentionStatus, CreateItemInput, JsonValue } from "./domain.ts";
+import { successEnvelope } from "./envelope.ts";
 import { badRequest } from "./errors.ts";
 import { parseCreateItem } from "./validation.ts";
 import { waitForAttention } from "./wait.ts";
@@ -222,16 +223,16 @@ async function createCommand(context: ClientCommandContext, args: string[]): Pro
     );
     return;
   }
-  if (kind === "--file" || kind?.startsWith("--file=")) {
-    const source = kind === "--file" ? rest.shift() : kind.slice("--file=".length);
+  if (kind === "file" || kind === "--file" || kind?.startsWith("--file=")) {
+    const source = kind?.startsWith("--file=") ? kind.slice("--file=".length) : rest.shift();
     if (!source || rest.length > 0) {
-      throw new ClientUsageError("create --file requires exactly one JSON file or - for stdin");
+      throw new ClientUsageError("create file requires exactly one JSON file or - for stdin");
     }
     const input = parseCreateItem(await readJsonSource(source));
     commandOutput(context, await client.createItem(input));
     return;
   }
-  throw new ClientUsageError("create requires question, approval, browser, or --file ITEM.json");
+  throw new ClientUsageError("create requires question, approval, browser, or file ITEM.json");
 }
 
 async function createEnvelope(
@@ -508,7 +509,7 @@ function commandClient(context: ClientCommandContext): AttentionClient {
 }
 
 function commandOutput(context: ClientCommandContext, data: unknown): void {
-  console.log(context.json ? JSON.stringify({ ok: true, data }) : JSON.stringify(data, null, 2));
+  console.log(context.json ? JSON.stringify(successEnvelope(data)) : JSON.stringify(data, null, 2));
 }
 
 function printItems(items: readonly AttentionItem[], nextCursor: string | null): void {

@@ -9,6 +9,7 @@ import {
   loadConfig,
   saveConfig,
 } from "../src/config.ts";
+import { contract } from "../src/guide.ts";
 import { hashToken } from "../src/ids.ts";
 
 const temporaryRoots: string[] = [];
@@ -34,7 +35,8 @@ describe("CLI entrypoint", () => {
     const result = runCli(["--help"]);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("agentattention — durable human-attention control plane");
+    expect(result.stdout).toContain(contract().meta.purpose.split(":")[0] ?? "");
+    expect(result.stdout).toContain("Agent commands:");
     expect(result.stderr).toBe("");
   });
 
@@ -47,7 +49,7 @@ describe("CLI entrypoint", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout).error.code).toBe("client_config_unreadable");
-    expect(result.stdout).not.toContain("durable human-attention control plane");
+    expect(result.stdout).not.toContain("Agent commands:");
   });
 
   test("creates and recovers the standard local client without printing its token", () => {
