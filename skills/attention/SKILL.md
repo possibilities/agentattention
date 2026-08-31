@@ -13,7 +13,7 @@ monitors, sounds, or desktop notifications.
 
 ## Non-negotiables
 
-- Prefer the three first-party contracts below. Use generic `create --file`
+- Prefer the three first-party contracts below. Use generic `create file`
   only when a separately implemented producer and processor already share an
   external contract; the server deliberately does not route or validate one.
 - Every item gets a concise `--title`. Use `--context` or `--context-file` for
@@ -126,7 +126,8 @@ inference.
 
 ## Capture ids and wait
 
-The successful `--json` envelope is `{ "ok": true, "data": <item> }`. Keep
+The successful `--json` envelope is
+`{ "schema_version": 1, "ok": true, "error": null, "data": <item> }`. Keep
 `.data.id` in the producing workflow. Prefer one wait command for all relevant
 ids:
 
@@ -177,5 +178,8 @@ agentattention --json prune --correlation jobsearch-round-42 \
   --apply --reason "Round superseded"
 ```
 
-`agentattention --help` is the complete installed command surface and wins if
-this runbook ever drifts.
+`agentattention --help` is the complete installed command surface, rendered from
+the contract published by `agentattention guide --json`; both win if this
+runbook ever drifts. `agentattention help COMMAND` prints one command's
+arguments in full, and `agentattention --agent-help` is the same runbook the
+contract carries.

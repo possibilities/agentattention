@@ -17,8 +17,11 @@ import {
   saveClientConfig,
   saveConfig,
 } from "./config.ts";
+import { contract, declaredArgument } from "./contract.ts";
 import { startDaemon } from "./daemon.ts";
+import { failureEnvelope, successEnvelope } from "./envelope.ts";
 import { conflict, notFound, ServiceError } from "./errors.ts";
+import { renderAgentHelp, renderHelp, renderTeaser } from "./guide.ts";
 
 interface CliContext extends ClientCommandContext {
   args: string[];
@@ -33,7 +36,20 @@ async function main(): Promise<void> {
     const context = parseGlobal(process.argv.slice(2));
     const [command, ...args] = context.args;
     if (command === "help" || command === "--help" || command === "-h") {
-      console.log(usage());
+      console.log(renderHelp(args));
+      return;
+    }
+    if (command === "--agent-help") {
+      console.log(renderAgentHelp());
+      return;
+    }
+    if (command === "--agent-teaser") {
+      console.log(renderTeaser());
+      return;
+    }
+    if (command === "guide") {
+      if (args.length > 0) throw new UsageError("guide takes no arguments");
+      console.log(context.json ? JSON.stringify(successEnvelope(contract())) : renderAgentHelp());
       return;
     }
     if (!command) {
@@ -61,7 +77,7 @@ async function main(): Promise<void> {
     throw new UsageError(`Unknown command: ${command}`);
   } catch (error) {
     if (error instanceof UsageError || error instanceof ClientUsageError) {
-      console.error(`${error.message}\n\n${usage()}`);
+      console.error(`${error.message}\n\n${renderHelp()}`);
       process.exitCode = 2;
       return;
     }
@@ -75,12 +91,7 @@ async function main(): Promise<void> {
           );
     const json = process.argv.includes("--json");
     if (json) {
-      console.log(
-        JSON.stringify({
-          ok: false,
-          error: { code: serviceError.code, message: serviceError.message },
-        }),
-      );
+      console.log(JSON.stringify(failureEnvelope(serviceError.code, serviceError.message)));
     } else {
       console.error(`${serviceError.code}: ${serviceError.message}`);
     }
@@ -117,7 +128,7 @@ async function serve(context: CliContext): Promise<void> {
   const config = loadConfig(context.serverConfigPath);
   const daemon = startDaemon(config);
   if (context.json) {
-    console.log(JSON.stringify({ ok: true, data: { status: "ready", url: daemon.url } }));
+    console.log(JSON.stringify(successEnvelope({ status: "ready", url: daemon.url })));
   } else {
     console.log(`agentattention ready at ${daemon.url}`);
   }
@@ -146,8 +157,8 @@ function credential(context: CliContext, args: string[]): void {
     return;
   }
   if (subcommand === "create") {
-    const name = option(rest, "--name");
-    const scopes = option(rest, "--scopes")
+    const name = option(rest, declaredArgument("credential create", "--name"));
+    const scopes = option(rest, declaredArgument("credential create", "--scopes"))
       .split(",")
       .map((scope) => scope.trim())
       .filter(Boolean);
@@ -253,51 +264,6 @@ function option(args: string[], name: string): string {
 }
 
 function output(context: CliContext, data: unknown): void {
-  if (context.json) console.log(JSON.stringify({ ok: true, data }));
+  if (context.json) console.log(JSON.stringify(successEnvelope(data)));
   else console.log(typeof data === "string" ? data : JSON.stringify(data, null, 2));
-}
-
-function usage(): string {
-  return `agentattention — durable human-attention control plane
-
-Usage:
-  agentattention [GLOBAL]
-  agentattention [GLOBAL] init
-  agentattention [GLOBAL] serve
-  agentattention [GLOBAL] credential create --name NAME --scopes SCOPE,...
-  agentattention [GLOBAL] credential list
-  agentattention [GLOBAL] credential revoke ID_OR_NAME
-  agentattention [GLOBAL] client init
-
-  agentattention [GLOBAL] create question --title TITLE --question PROMPT [--question PROMPT ...]
-  agentattention [GLOBAL] create approval --title TITLE --document FILE [--format markdown|plain]
-  agentattention [GLOBAL] create browser --title TITLE --target NAME --action TEXT
-  agentattention [GLOBAL] create --file ITEM.json
-  agentattention [GLOBAL] list [FILTERS]
-  agentattention [GLOBAL] show ID
-  agentattention [GLOBAL] status [FILTERS]
-  agentattention [GLOBAL] wait ID... [--all] [--timeout DURATION]
-  agentattention [GLOBAL] wait --correlation ID [--all] [--timeout DURATION]
-  agentattention [GLOBAL] events [--after CURSOR] [--follow]
-  agentattention [GLOBAL] claim ID [--lease SECONDS]
-  agentattention [GLOBAL] release ID --claim CLAIM_ID
-  agentattention [GLOBAL] resolve ID --file RESOLUTION.json [--claim CLAIM_ID]
-  agentattention [GLOBAL] return ID --reason REASON [--comment TEXT] [--claim CLAIM_ID]
-  agentattention [GLOBAL] cancel ID --reason REASON
-  agentattention [GLOBAL] prune FILTERS [--apply --reason REASON]
-  agentattention [GLOBAL] tui
-  agentattention [GLOBAL] process ID
-
-Global options:
-  --config PATH          server configuration (default ${defaultConfigPath()})
-  --client-config PATH   client credential (default ${defaultClientConfigPath()})
-  --json                 structured command output
-
-Create metadata:
-  --context TEXT | --context-file FILE
-  --priority N  --label KEY=VALUE  --correlation ID  --parent ID  --use-before RFC3339
-
-Filters:
-  --status STATUS  --contract CONTRACT  --correlation ID  --label KEY=VALUE
-  --claimed any|claimed|unclaimed|mine  --limit N`;
 }
